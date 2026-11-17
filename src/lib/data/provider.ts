@@ -5,7 +5,7 @@ export interface FinancialDataProvider {
 export class UnsupportedTickerError extends Error {
   constructor(ticker: string) {
     super(
-      `“${ticker}” is not supported in Phase 1. Use ASTR, our fictional illustrative company. Live financial data arrives in Phase 2.`,
+      `“${ticker}” is not supported by the fictional demo provider. Use ASTR for illustrative data, or use the SEC research search above for actual company financials.`,
     );
     this.name = "UnsupportedTickerError";
   }

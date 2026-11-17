@@ -15,9 +15,10 @@ export interface Company {
 }
 export interface IncomeStatement {
   year: number;
+  periodLabel?: string;
   revenue: number;
   ebit: number;
-  cashTaxes: number;
+  cashTaxes: number | null;
 }
 export interface CashFlowStatement {
   year: number;
@@ -30,7 +31,7 @@ export interface BalanceSheet {
   excessCash: number;
   debt: number;
   otherClaims: number;
-  netWorkingCapital: number;
+  netWorkingCapital: number | null;
 }
 export interface MarketPrice {
   price: number;

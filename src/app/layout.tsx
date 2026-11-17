@@ -3,7 +3,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Intrinsic · Valuation workspace",
   description:
-    "A transparent, interactive DCF research dashboard with fictional illustrative data.",
+    "SEC source financials, transparent model estimates and interactive DCF research.",
 };
 export default function RootLayout({
   children,

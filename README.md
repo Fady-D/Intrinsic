@@ -1,90 +1,102 @@
 # Intrinsic
 
-Phase 1: an interactive, transparent unlevered DCF valuation dashboard. Built with Next.js App Router, strict TypeScript, React, Tailwind CSS, Recharts and Vitest.
+A personal stock valuation workspace with actual SEC EDGAR financials, explicit model estimates, independent scenarios and an interactive unlevered DCF engine. Phase 2 preserves the Phase 1 scenario editor, slowdown simulator, five charts and intermediate calculation tables.
 
 ## Run locally
 
-Use Node.js 22.12+ (Node 24 LTS recommended) and npm. No accounts, API keys or paid services are required.
+Use Node.js 24 LTS (also supported: Node 22.12+ or 26+) and npm.
 
 ```sh
 npm ci
+cp .env.example .env.local
+```
+
+Set `SEC_USER_AGENT` in `.env.local` to your application name and **your real contact email**. If `.env.local` already exists with the configured identity, retain it. The file is Git-ignored and never sent to the browser. No paid API, database, authentication or subscription is required.
+
+```sh
 npm run dev
 ```
 
-Open http://localhost:3000. Enter **ASTR** to load Aster Systems, an entirely fictional company. Every other symbol returns an unsupported-symbol message. The fictional ASTR symbol does not refer to any real security with the same symbol.
+Open [localhost:3000](http://localhost:3000). Enter **MSFT, GOOGL, AAPL, AMZN or ORCL** in the research search. The separate **ASTR demo** remains entirely fictional and is only shown when explicitly selected.
+
+## Test an actual company
+
+1. Load a supported ticker. The server resolves SEC identity and retrieves Company Facts and Submissions.
+2. Review annual, YTD, quarter and TTM columns, source details, data coverage and warnings. Amounts and shares use millions; prices use USD/share.
+3. Enter a manual USD share price, or optionally configure a free Alpha Vantage key as `QUOTE_API_KEY`. Quotes from this adapter are **previous-close**, never live. Stale quotes are displayed but not used automatically. A manual override is clearly labeled; price can remain unavailable, in which case upside/downside is unavailable.
+4. Supply justified **excess cash, other claims and a fully diluted share estimate**. These cannot be reliably inferred from reported cash or weighted-average shares. Debt and D&A are prefilled only where the selected concepts provide coverage; otherwise input is required. Missing critical revenue, operating income, CapEx or irreconcilable interim periods block valuation.
+5. Document the manual estimates, review the assumptions, acknowledge them, and choose **Initialize / reinitialize DCF**. No valuation is described as fully verified.
+6. Edit bear/base/bull assumptions or apply growth slowdown as in Phase 1. Changing the reference price updates upside/downside. Loading or refreshing a company clears the prior model and initializes new company-specific inputs. Reinitializing explicitly resets the scenarios; refreshing the browser does not persist research state.
+
+## Checks
 
 ```sh
-npm test
+npm test                 # deterministic fixtures, no live network dependency
 npm run lint
 npm run typecheck
 npm run build
-npm start
+npm start                # after stopping dev server on the same port
 ```
 
-Stop the development server before testing the production server on the default port. ESLint 9 is retained because Next.js's transitive lint plugins do not all declare ESLint 10 compatibility. The lockfile fixes the exact tested dependency versions.
+Opt-in network checks, requiring a configured SEC contact:
 
-## What is included
-
-- Responsive dark research workspace with sidebar navigation and explicit fictional-data disclosures.
-- Independent editable bear/base/bull scenarios, thirteen slider/numeric inputs, per-case and global reset. Edits survive scenario switching during the current page session; refreshing resets the model.
-- Original scenario summaries and 15%, 25%, 35%, 50% margin-of-safety entry prices.
-- Growth slowdown overlay for years 1–3, 4–5, 6–10 or all ten years, with original/adjusted value comparison. The original scenarios remain unchanged.
-- Five responsive Recharts visualizations: revenue, FCFF, operating margins, scenarios and discounted annual cash flows.
-- Historical source statements, a ten-year forecast plus terminal year, and enterprise-to-equity bridge with intermediate calculations.
-- Helpful invalid-input messages and support for negative FCFF, terminal value, equity and per-share results.
-
-## Project structure
-
-```text
-src/app/                        App Router page, root layout, responsive styles
-src/components/dashboard.tsx    Workspace composition and scenario state
-src/components/assumption-input.tsx  Reusable slider / precise numeric input
-src/components/charts.tsx       Recharts views
-src/lib/data/provider.ts        Asynchronous financial provider contract and errors
-src/lib/data/illustrative.ts    Fictional source data and fresh scenario defaults
-src/lib/finance/types.ts        Source, assumption, forecast and result interfaces
-src/lib/finance/dcf.ts          Pure financial functions; no React dependencies
-src/lib/finance/dcf.test.ts     Financial validation and provider-boundary tests
-src/lib/format.ts              Presentation formatting
+```sh
+npm run test:live        # retrieves all five companies; writes ignored .local/live reports
+npm run verify:filings   # matches AAPL, GOOGL and AMZN metrics to official 10-K rows
 ```
 
-## Financial conventions
+Run live retrieval before filing verification. These are separate from deterministic tests; mocked tests do not prove live connectivity. See [executed verification and results](docs/phase-2-verification.md).
 
-All financial statement amounts are **USD millions**, diluted shares are **millions of shares**, share prices are **USD/share**, and internal rates are decimal fractions. Source history ends in 2025; forecast years are 2026–2035; 2036 is the terminal year. The illustrative share price is dated 2025-12-31, not a current market quote.
+## Architecture and changed files
 
-Revenue compounds at the configured stage growth rate. Operating margin interpolates linearly from the year 1 input to the year 10 target, then stays at target in year 11. D&A and CapEx are fractions of forecast revenue. Change in NWC equals the configured ratio multiplied by the change in revenue; a revenue contraction releases NWC. Excess cash, debt and other claims come from the latest source balance sheet.
+| Area | Files | Responsibility |
+| --- | --- | --- |
+| App | `src/app/page.tsx`, `layout.tsx`, `globals.css` | Research entry point, metadata and responsive layout |
+| Server endpoints | `src/app/api/financials/route.ts`, `api/quote/route.ts` | Server-only SEC and quote access, explicit error statuses |
+| SEC data | `src/lib/sec/{client,normalize,types}.ts` | Ticker identity, typed source data, comparable periods, provenance, FCF and TTM |
+| HTTP | `src/lib/server/http.ts` | Bounded memory cache, request coalescing, throttling, timeout and bounded retries |
+| Quotes | `src/lib/market/quotes.ts` | Modular quote-provider contract, optional Alpha Vantage adapter, freshness and manual fallback |
+| Model adapter | `src/lib/data/research.ts` | Required estimates, source-derived starting ratios and growth, safe ticker-state reducer, mapping into existing DCF |
+| UI | `src/components/research-workspace.tsx`, `financial-sources.tsx` | Search, status, price, model review, historical financials and filing links |
+| Preserved dashboard | `src/components/dashboard.tsx`, `charts.tsx` | Accepts company data and scenario defaults; retains Phase 1 controls and visualizations |
+| Financial engine | `src/lib/finance/dcf.ts` | Pure Phase 1 valuation equations; unchanged in Phase 2 |
+| Types/formatting | `src/lib/finance/types.ts`, `src/lib/format.ts` | Explicit nullable unavailable source fields and readable missing-value formatting |
+| Tests | `src/lib/{sec,server,market,data}/*.test.ts`, `src/lib/sec/fixtures/company.ts` | Deterministic synthetic inputs covering period handling and provider behavior |
+| Live verification | `scripts/live-sec.test.ts`, `scripts/verify-filings.mjs`, `vitest.live.config.ts` | Opt-in real retrieval and official-filing comparison |
+| Configuration | `.env.example`, `.gitignore`, `package*.json` | Server environment template, ignored contact/runtime data and verification scripts |
+
+The original illustrative provider remains isolated. `SecFinancialProvider` supplies a richer provenance-preserving result; `toDcfDataset` adapts reviewed inputs to the existing engine rather than replacing the financial model. Keys and contacts are only accessed by server modules. The quote interface permits another provider without changing valuation functions.
+
+## Financial and reporting conventions
+
+- Financial statement amounts are **USD millions**, shares are **millions**, prices are **USD/share**, internal rates are decimals. Other currencies and unit mismatches are not silently combined.
+- Annual duration facts must span 350–380 days in 10-K filings, supporting 52/53-week calendars. Interim YTD and quarterly periods remain distinct. Facts match exact start/end dates and are selected by filing date and accession at or before a snapshot cutoff.
+- Historical values use the latest available comparable filings at the requested cutoff, so they can include restatements. The provenance identifies the actual filing used. The normalizer supports historical `asOf` cutoffs; the UI uses the current snapshot.
+- TTM flows use **annual + current YTD − corresponding prior YTD**, requiring comparable durations, fiscal starts and matching concepts. TTM diluted weighted-average shares use day-weighted share-period arithmetic, not cash-flow addition. Quarter cash flows can be derived from consecutive YTD values when concepts and dates align.
+- CapEx is a positive expenditure. **Reported FCF = operating cash flow − CapEx**, distinct from modeled FCFF. Annual FCF growth is shown only for comparable periods with a positive prior FCF. Other cases display N/A.
+- Equivalent tag alternatives are ordered. Cash does not automatically include short-term investments. Debt totals are not added to their own components; short-term borrowing coverage must be explicit. Productive-assets CapEx and D&A variants retain the selected tags and scope caveats. Missing custom/standard concepts remain missing.
+- Initial margins and CapEx/D&A ratios use aligned reported performance. Starting base growth uses comparable annual revenue growth, bounded to −20% to +30%, with editable bear/bull adjustments and later-year fade. Without comparable history, disclosed generic growth estimates require review. Forecast growth, taxes, WACC, NWC investment, terminal growth and safety margins remain **estimates**, not SEC disclosures.
 
 ```text
-EBIT = revenue × operating margin
-Cash taxes = EBIT × tax rate
 FCFF = EBIT × (1 − tax rate) + D&A − CapEx − change in NWC
-PV of FCFF(t) = FCFF(t) / (1 + WACC)^t
-Terminal value(t10) = FCFF(t11) / (WACC − terminal growth)
+PV FCFF(t) = FCFF(t) / (1 + WACC)^t
+Terminal value(t10) = recomputed FCFF(t11) / (WACC − terminal growth)
 Enterprise value = sum(PV FCFF years 1–10) + PV terminal value
 Equity value = enterprise value + excess cash − debt − other claims
-Value per share = equity value / diluted shares
-Safety entry price = value per share × (1 − margin of safety)
-Upside/downside = value per share / illustrative market price − 1
+Value / share = equity value / fully diluted share estimate
+Safety entry price = value / share × (1 − safety margin)
 ```
 
-Year 11 revenue grows at terminal growth, with target margins and the same tax, D&A, CapEx and NWC policies. Its FCFF is recomputed rather than merely growing year 10 FCFF. Terminal value is discounted ten years, and year 11 FCFF is not added to the explicit forecast. The displayed year 11 discount factor and PV are reference values only.
+Margins interpolate from year 1 to year 10. NWC investment is a share of incremental revenue. Year 11 uses terminal growth and the same reinvestment policies; its FCFF is not double-counted. Year-end discounting applies. Negative flows, terminal values and equity values remain visible. The specified FCFF equation assumes an immediate tax benefit on negative EBIT; tax-benefit realizability is not assessed. Forecast labels are annual steps from the reporting anchor, especially for non-calendar and TTM inputs.
 
-To follow the requested FCFF equation exactly, **negative EBIT assumes an immediate tax benefit**. The model does not assess whether that benefit is realizable. Share count and capital-structure adjustments remain fixed during the forecast. This model does not constrain terminal reinvestment against an independently estimated ROIC. These simplifications should be reviewed before using real-company inputs.
+A modeled value above price does not establish an investment opportunity.
 
-WACC must be positive and exceed terminal growth, terminal and stage growth must exceed −100%, shares must be positive, and tax/investment/safety rates have explicit bounds. Nonfinite and overflowing calculations are rejected. Zero market price or zero enterprise value gives an unavailable percentage, rather than division by zero. Negative values remain visible; negative safety entry prices are arithmetic outputs, not executable trade targets. A slowdown scales growth by (1 − reduction), so a negative growth rate becomes less negative.
+## Known limits and next work
 
-The top summary, scenario cards and scenario chart always reflect **original scenarios**. The outlook charts, forecast and valuation bridge reflect the **selected scenario with slowdown applied**. No real securities or real-company financials are represented. A modeled value above price alone does not establish that a security is undervalued.
-
-## Verification
-
-21 executed Vitest cases cover financial primitives, annual discounting, terminal value, equity conversion, per-share and safety calculations, slowdown windows/boundaries, scenario independence, invalid WACC/growth, zero shares, negative flows, a zero price and unsupported tickers. The hand-calculated constant-FCFF case has annual FCFF of 130, WACC 10%, zero growth, enterprise value 1,300, equity 1,340 and value/share 13.40.
-
-Linting, strict TypeScript and the production build were executed successfully. Browser checks verified ticker rejection, scenario retention, slowdown recalculation, invalid-terminal-input recovery and reset behavior; the 390px viewport had no document-level horizontal overflow. Browser console reported no warnings/errors during the final inspection.
-
-## Phase 2
-
-1. Implement SEC EDGAR and market-price adapters behind `FinancialDataProvider`, using server-side routes for credentials, identity headers, caching and rate limits.
-2. Normalize fiscal periods, XBRL concepts, currency/units, restatements, diluted shares and source provenance; distinguish missing values from zero.
-3. Add data reconciliation and real-company integration fixtures before exposing live valuations.
-4. Refine cash-tax realizability, operating versus excess cash, non-equity claims and terminal reinvestment/ROIC assumptions.
-5. Add saved local research state or export if needed. Authentication, databases, scheduled jobs and screening are outside Phase 1.
+- US-GAAP standard concepts only; custom XBRL extensions, mergers, transition years and missing concepts may require manual filing review. Unaligned periods block TTM/model use rather than receiving fabricated values.
+- Debt coverage, operating versus excess cash, current dilution and non-equity claims require judgment. D&A variants can include depletion or exclude intangible amortization; the source panel makes the selected concept visible and permits an explicit modeling override.
+- No automatic tax-loss carryforwards, changing share counts, ROIC-constrained terminal reinvestment or share-split adjustment of historical shares. Each period's share concept and filing remain visible.
+- SEC caching and rate limiting are **per running process**: 350ms request spacing, a one-day ticker-map cache, one-hour financial cache, and a 30-second refresh floor. Retries are bounded to three attempts for network/429/5xx errors. A scaled multi-process deployment would need shared rate limits/cache before broad use.
+- The optional quote adapter uses a 15-minute cache and a conservative 96-hour stale threshold rather than an exchange calendar. No quote API key was configured for the executed checks; live market-quote retrieval was not verified. Manual price mode works without it.
+- Source values have filing provenance; that is not a guarantee of accounting completeness or investment suitability. The UI requires acknowledgment of material manual estimates and never claims a fully verified valuation.
+- `.env.local` is local-only. Configure SEC identity separately on any new machine or deployment. Never prefix secret environment variables with `NEXT_PUBLIC_`.

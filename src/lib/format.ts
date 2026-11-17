@@ -4,7 +4,9 @@ export const money = (v: number) =>
     currency: "USD",
     maximumFractionDigits: 2,
   }).format(v);
-export const millions = (v: number) =>
-  new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(v);
+export const millions = (v: number | null | undefined) =>
+  v == null || !Number.isFinite(v)
+    ? "Missing"
+    : new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(v);
 export const percent = (v: number | null) =>
   v === null ? "N/A" : `${(v * 100).toFixed(1)}%`;

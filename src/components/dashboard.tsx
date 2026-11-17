@@ -16,6 +16,8 @@ import type {
   DcfResult,
   ScenarioId,
   SlowdownPeriod,
+  FinancialDataset,
+  ValuationScenario,
 } from "@/lib/finance/types";
 import { millions, money, percent } from "@/lib/format";
 import AssumptionInput from "./assumption-input";
@@ -78,17 +80,20 @@ const fields: {
     key: "shares",
     label: "Fully diluted shares",
     min: 1,
-    max: 500,
+    max: 20000,
     step: 1,
     unit: "m",
   },
 ];
-function evaluate(a: Assumptions): {
+function evaluate(
+  data: FinancialDataset,
+  a: Assumptions,
+): {
   result: DcfResult | null;
   error: string | null;
 } {
   try {
-    return { result: calculateDcf(illustrativeData, a), error: null };
+    return { result: calculateDcf(data, a), error: null };
   } catch (e) {
     return {
       result: null,
@@ -115,8 +120,17 @@ function Metric({
     </div>
   );
 }
-export default function Dashboard() {
-  const [scenarios, setScenarios] = useState(createScenarios),
+export default function Dashboard({
+  data = illustrativeData,
+  defaults = createScenarios(),
+  priceLabel = "Illustrative market price",
+}: {
+  data?: FinancialDataset;
+  defaults?: ValuationScenario[];
+  priceLabel?: string;
+}) {
+  const demo = data.source.kind === "illustrative";
+  const [scenarios, setScenarios] = useState(() => structuredClone(defaults)),
     [active, setActive] = useState<ScenarioId>("base");
   const [ticker, setTicker] = useState("ASTR"),
     [tickerError, setTickerError] = useState(""),
@@ -124,10 +138,16 @@ export default function Dashboard() {
   const [slowdown, setSlowdown] = useState(0),
     [period, setPeriod] = useState<SlowdownPeriod>("all");
   const selected = scenarios.find((s) => s.id === active)!;
-  const outputs = scenarios.map((s) => ({ ...s, ...evaluate(s.assumptions) }));
+  const outputs = scenarios.map((s) => ({
+    ...s,
+    ...evaluate(data, s.assumptions),
+  }));
   const base = outputs.find((s) => s.id === "base")!.result;
-  const original = evaluate(selected.assumptions),
-    adjusted = evaluate(applySlowdown(selected.assumptions, slowdown, period));
+  const original = evaluate(data, selected.assumptions),
+    adjusted = evaluate(
+      data,
+      applySlowdown(selected.assumptions, slowdown, period),
+    );
   const result = adjusted.result,
     error = adjusted.error;
   async function search(e: React.FormEvent) {
@@ -181,13 +201,13 @@ export default function Dashboard() {
           </a>
         </nav>
         <div className="sidebar-bottom">
-          <span className="status-dot" /> Phase 1 · Research sandbox
+          <span className="status-dot" /> Phase 2 · Research workspace
           <p>
             Built on fundamentals.
             <br />
             Driven by your assumptions.
           </p>
-          <span className="version">INTRINSIC / 0.1</span>
+          <span className="version">INTRINSIC / 0.2</span>
         </div>
       </aside>
       <main>
@@ -195,7 +215,9 @@ export default function Dashboard() {
           <span>
             Workspace <span className="slash">/</span> DCF valuation
           </span>
-          <span className="outline-badge">ILLUSTRATIVE DATA</span>
+          <span className="outline-badge">
+            {demo ? "ILLUSTRATIVE DATA" : "SEC DATA + MODEL ESTIMATES"}
+          </span>
         </header>
         <div className="content">
           <section id="overview">
@@ -207,22 +229,24 @@ export default function Dashboard() {
                   Explore the assumptions behind a business’s intrinsic value.
                 </p>
               </div>
-              <form onSubmit={search} className="ticker-form">
-                <label htmlFor="ticker">Company symbol</label>
-                <div>
-                  <input
-                    id="ticker"
-                    value={ticker}
-                    onChange={(e) => setTicker(e.target.value)}
-                    maxLength={20}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <button disabled={loading} type="submit">
-                    {loading ? "Loading…" : "Load →"}
-                  </button>
-                </div>
-              </form>
+              {demo && (
+                <form onSubmit={search} className="ticker-form">
+                  <label htmlFor="ticker">Company symbol</label>
+                  <div>
+                    <input
+                      id="ticker"
+                      value={ticker}
+                      onChange={(e) => setTicker(e.target.value)}
+                      maxLength={20}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button disabled={loading} type="submit">
+                      {loading ? "Loading…" : "Load →"}
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
             {tickerError && (
               <div role="alert" className="alert">
@@ -231,27 +255,41 @@ export default function Dashboard() {
               </div>
             )}
             <div className="company-row">
-              <div className="company-avatar">A</div>
+              <div className="company-avatar">
+                {data.company.name.slice(0, 1)}
+              </div>
               <div>
                 <h2>
-                  Aster Systems <span>ASTR</span>
+                  {data.company.name} <span>{data.company.ticker}</span>
                 </h2>
-                <p>Fictional company · Enterprise software · USD</p>
+                <p>
+                  {demo
+                    ? "Fictional company · Enterprise software · USD"
+                    : "SEC registrant · Reported USD financials · User estimates"}
+                </p>
               </div>
-              <span className="demo-badge">DEMO COMPANY</span>
+              <span className="demo-badge">
+                {demo ? "DEMO COMPANY" : "MODEL ESTIMATES"}
+              </span>
               <div className="company-price">
-                <strong>{money(illustrativeData.market.price)}</strong>
+                <strong>
+                  {data.market.price > 0
+                    ? money(data.market.price)
+                    : "Price required"}
+                </strong>
                 <span>
-                  Illustrative share price · {illustrativeData.market.asOf}
+                  {priceLabel} · {data.market.asOf}
                 </span>
               </div>
             </div>
             <div className="disclosure">
               <span>ⓘ</span>
               <p>
-                All financials and prices are fictional. This model demonstrates
-                valuation mechanics. Estimated value is sensitive to assumptions
-                and is not a recommendation to buy or sell.
+                {demo
+                  ? "All financials and prices are fictional. This model demonstrates valuation mechanics."
+                  : "Source financials are SEC-reported. Valuations include user estimates for excess cash, diluted shares, claims and forecast assumptions; they are not fully verified valuations."}{" "}
+                Estimated value is sensitive to assumptions and is not a
+                recommendation to buy or sell.
               </p>
             </div>
             <div className="section-heading">
@@ -260,8 +298,12 @@ export default function Dashboard() {
             </div>
             <div className="summary-grid">
               <Metric
-                label="Illustrative market price"
-                value={money(illustrativeData.market.price)}
+                label={priceLabel}
+                value={
+                  data.market.price > 0
+                    ? money(data.market.price)
+                    : "Price required"
+                }
                 note="USD / share"
               />
               {outputs.map((s) => (
@@ -273,7 +315,7 @@ export default function Dashboard() {
                   }
                   note={
                     s.id === "base"
-                      ? `${percent(s.result?.upside ?? null)} vs. illustrative price`
+                      ? `${percent(s.result?.upside ?? null)} vs. reference price`
                       : `${percent(s.assumptions.wacc)} WACC`
                   }
                   accent={s.id === "base"}
@@ -311,7 +353,7 @@ export default function Dashboard() {
               <Metric
                 label="Base upside / downside"
                 value={percent(base?.upside ?? null)}
-                note="Modeled fair value versus illustrative price"
+                note="Modeled fair value versus reference price"
               />
             </div>
           </section>
@@ -385,7 +427,9 @@ export default function Dashboard() {
             <section className="panel assumptions-panel" id="assumptions">
               <div className="panel-heading">
                 <div>
-                  <div className="eyebrow">MODEL INPUTS</div>
+                  <div className="eyebrow">
+                    {demo ? "MODEL INPUTS" : "FORECAST ESTIMATES · EDITABLE"}
+                  </div>
                   <h2>{selected.label} case assumptions</h2>
                 </div>
                 <button
@@ -394,7 +438,9 @@ export default function Dashboard() {
                     setScenarios((prev) =>
                       prev.map((s) =>
                         s.id === active
-                          ? createScenarios().find((d) => d.id === active)!
+                          ? structuredClone(defaults).find(
+                              (d) => d.id === active,
+                            )!
                           : s,
                       ),
                     );
@@ -427,7 +473,7 @@ export default function Dashboard() {
               <button
                 className="reset-all"
                 onClick={() => {
-                  setScenarios(createScenarios());
+                  setScenarios(structuredClone(defaults));
                   setSlowdown(0);
                   setPeriod("all");
                 }}
@@ -534,7 +580,7 @@ export default function Dashboard() {
                     <span>{percent(slowdown)} growth slowdown applied</span>
                   </div>
                   <Charts
-                    data={illustrativeData}
+                    data={data}
                     result={result}
                     scenarios={chartScenarios}
                   />
@@ -578,7 +624,7 @@ export default function Dashboard() {
                         <dd>{money(result.entryPrice)}</dd>
                       </div>
                       <div>
-                        <dt>Upside / downside to illustrative price</dt>
+                        <dt>Upside / downside to reference price</dt>
                         <dd>{percent(result.upside)}</dd>
                       </div>
                       <div>
@@ -661,102 +707,106 @@ export default function Dashboard() {
               1–10 cash flows. Its PV is shown for reference only.
             </p>
           </section>
-          <section id="financials" className="panel">
-            <div className="panel-heading">
-              <div>
-                <div className="eyebrow">SOURCE DATA</div>
-                <h2>Historical financials</h2>
+          {demo && (
+            <section id="financials" className="panel">
+              <div className="panel-heading">
+                <div>
+                  <div className="eyebrow">SOURCE DATA</div>
+                  <h2>Historical financials</h2>
+                </div>
+                <span>Fictional · USD m · fiscal year end</span>
               </div>
-              <span>Fictional · USD m · fiscal year end</span>
-            </div>
-            <div className="table-scroll">
-              <table>
-                <caption>
-                  Aster Systems illustrative source statements. All figures are
-                  fabricated for this demonstration.
-                </caption>
-                <thead>
-                  <tr>
-                    <th>Fiscal year</th>
-                    {illustrativeData.incomeStatements.map((r) => (
-                      <th key={r.year}>{r.year}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[
-                    {
-                      label: "Revenue",
-                      values: illustrativeData.incomeStatements.map(
-                        (r) => r.revenue,
-                      ),
-                    },
-                    {
-                      label: "EBIT",
-                      values: illustrativeData.incomeStatements.map(
-                        (r) => r.ebit,
-                      ),
-                    },
-                    {
-                      label: "Cash taxes",
-                      values: illustrativeData.incomeStatements.map(
-                        (r) => r.cashTaxes,
-                      ),
-                    },
-                    {
-                      label: "D&A",
-                      values: illustrativeData.cashFlows.map(
-                        (r) => r.depreciation,
-                      ),
-                    },
-                    {
-                      label: "Capital expenditures",
-                      values: illustrativeData.cashFlows.map((r) => r.capex),
-                    },
-                    {
-                      label: "Change in NWC",
-                      values: illustrativeData.cashFlows.map(
-                        (r) => r.changeInNwc,
-                      ),
-                    },
-                    {
-                      label: "Net working capital",
-                      values: illustrativeData.balanceSheets.map(
-                        (r) => r.netWorkingCapital,
-                      ),
-                    },
-                    {
-                      label: "Excess cash",
-                      values: illustrativeData.balanceSheets.map(
-                        (r) => r.excessCash,
-                      ),
-                    },
-                    {
-                      label: "Debt",
-                      values: illustrativeData.balanceSheets.map((r) => r.debt),
-                    },
-                    {
-                      label: "Other non-equity claims",
-                      values: illustrativeData.balanceSheets.map(
-                        (r) => r.otherClaims,
-                      ),
-                    },
-                  ].map((row) => (
-                    <tr key={row.label}>
-                      <th>{row.label}</th>
-                      {row.values.map((v, i) => (
-                        <td key={i}>{millions(v)}</td>
+              <div className="table-scroll">
+                <table>
+                  <caption>
+                    Aster Systems illustrative source statements. All figures
+                    are fabricated for this demonstration.
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th>Fiscal year</th>
+                      {illustrativeData.incomeStatements.map((r) => (
+                        <th key={r.year}>{r.year}</th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="table-note">
-              Source: {illustrativeData.source.name} · As of{" "}
-              {illustrativeData.source.asOf}. {illustrativeData.source.note}
-            </p>
-          </section>
+                  </thead>
+                  <tbody>
+                    {[
+                      {
+                        label: "Revenue",
+                        values: illustrativeData.incomeStatements.map(
+                          (r) => r.revenue,
+                        ),
+                      },
+                      {
+                        label: "EBIT",
+                        values: illustrativeData.incomeStatements.map(
+                          (r) => r.ebit,
+                        ),
+                      },
+                      {
+                        label: "Cash taxes",
+                        values: illustrativeData.incomeStatements.map(
+                          (r) => r.cashTaxes,
+                        ),
+                      },
+                      {
+                        label: "D&A",
+                        values: illustrativeData.cashFlows.map(
+                          (r) => r.depreciation,
+                        ),
+                      },
+                      {
+                        label: "Capital expenditures",
+                        values: illustrativeData.cashFlows.map((r) => r.capex),
+                      },
+                      {
+                        label: "Change in NWC",
+                        values: illustrativeData.cashFlows.map(
+                          (r) => r.changeInNwc,
+                        ),
+                      },
+                      {
+                        label: "Net working capital",
+                        values: illustrativeData.balanceSheets.map(
+                          (r) => r.netWorkingCapital,
+                        ),
+                      },
+                      {
+                        label: "Excess cash",
+                        values: illustrativeData.balanceSheets.map(
+                          (r) => r.excessCash,
+                        ),
+                      },
+                      {
+                        label: "Debt",
+                        values: illustrativeData.balanceSheets.map(
+                          (r) => r.debt,
+                        ),
+                      },
+                      {
+                        label: "Other non-equity claims",
+                        values: illustrativeData.balanceSheets.map(
+                          (r) => r.otherClaims,
+                        ),
+                      },
+                    ].map((row) => (
+                      <tr key={row.label}>
+                        <th>{row.label}</th>
+                        {row.values.map((v, i) => (
+                          <td key={i}>{millions(v)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="table-note">
+                Source: {illustrativeData.source.name} · As of{" "}
+                {illustrativeData.source.asOf}. {illustrativeData.source.note}
+              </p>
+            </section>
+          )}
           <section className="methodology">
             <h3>Understand the model</h3>
             <p>

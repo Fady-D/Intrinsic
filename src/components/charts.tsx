@@ -67,7 +67,7 @@ export default function Charts({
 }) {
   const revenue = [
     ...data.incomeStatements.map((r, i, arr) => ({
-      year: String(r.year),
+      year: r.periodLabel ?? String(r.year),
       historical: r.revenue,
       projected: i === arr.length - 1 ? r.revenue : undefined,
     })),

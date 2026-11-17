@@ -1,4 +1,4 @@
-import Dashboard from "@/components/dashboard";
+import ResearchWorkspace from "@/components/research-workspace";
 export default function Page() {
-  return <Dashboard />;
+  return <ResearchWorkspace />;
 }
