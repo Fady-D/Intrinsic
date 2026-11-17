@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import type { VerifiedFinancials } from "@/lib/sec/types";
+import { assumptionErrors, assumptionLabels } from "@/lib/finance/validation";
 import type { Assumptions } from "@/lib/finance/types";
 import type { ModelInputs } from "@/lib/data/research";
 import {
@@ -79,7 +80,7 @@ export default function AutomaticValuation({
     verifiedQuotePrice,
   );
   const forward =
-    forecastPlan && forecastPlan.mode !== "historical" ? forecastPlan : null;
+    forecastPlan && (forecastPlan.mode !== "historical" || forecastPlan.rows.some(r=>r.source==="User override")) ? forecastPlan : null;
   const b = forward
     ? buildAutomaticBaseline(
         data,
@@ -148,49 +149,15 @@ export default function AutomaticValuation({
           historical={historical.assumptions}
           onChange={setForecastPlan}
         />
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <div className="eyebrow">AUTOMATIC FUNDAMENTAL BASELINE</div>
-              <h2>
-                {fiscal?.error ? "Missing required inputs" : b.status === "Incomplete" ? "Missing required inputs / review needed" : "Provisional — estimated assumptions"} valuation ·{" "}
-                {data.ticker}
-              </h2>
-            </div>
-            <button
-              type="button"
-              className="text-button"
-              onClick={() => setOverrides({})}
-            >
-              Reset automatic baseline ↺
-            </button>
-          </div>
-          <div role="status" aria-label="Valuation readiness">
-            {fiscal?.error ? `Financial-data limitation: ${fiscal.error}` : b.issues.length ? "Missing required inputs — complete the fields below." : Object.keys(b.scenarioIssues).length ? "Assumptions need review — scenario-specific errors appear beside the model inputs." : "Provisional — estimated assumptions; ready to calculate."}
-          </div>
-          <p className="table-note">
-            Historical growth, normalized margins, tax and reinvestment
-            estimates are derived below. No individual acknowledgment is
-            required. Missing material disclosures still block valuation.
-            Changes here regenerate scenario baselines; the dashboard below
-            preserves independent scenario edits.
-          </p>
-          {b.issues.length > 0 && (
-            <div className="alert" role="alert">
-              <strong>Complete these material inputs</strong>
-              <ul>
-                {b.issues.map((v) => (
-                  <li key={v}>{v}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+        <details className="panel" open={b.issues.length>0 || !!fiscal?.error}><summary>{b.issues.length ? "Needs Review" : "Financial inputs and sources · advanced"}</summary>
+          <div className="panel-heading"><h3>{b.issues.length ? "Complete unresolved inputs" : "Automatic financial baseline"}</h3><button type="button" className="text-button" onClick={()=>setOverrides({})}>Reset financial overrides</button></div>
+          {fiscal?.error && <p role="alert">{fiscal.error}</p>}
           {b.inputs.otherClaims === null && <div className="alert">
             <p>Preferred and minority claims are unresolved. Enter a reviewed total below, or confirm that you reviewed the company’s disclosures and found no material non-equity claim.</p>
             <button type="button" className="text-button" onClick={()=>financial("otherClaims",0)}>I reviewed claims — use zero</button>
           </div>}
           <div className="manual-grid">
-            {financialFields.map(([key, label, scale]) =>
+            {financialFields.filter(([key])=>b.inputs[key]===null || !Number.isFinite(b.inputs[key]) || Object.hasOwn(overrides.financial??{},key)).map(([key, label, scale]) =>
               input(
                 `${label}${Object.hasOwn(overrides.financial ?? {}, key) ? " · manual override" : ""}`,
                 b.inputs[key],
@@ -199,12 +166,9 @@ export default function AutomaticValuation({
               ),
             )}
           </div>
-          <p className="table-note">
-            Prefilled cash and shares are labeled estimates, not verified excess
-            cash or exact current dilution. Missing short-term debt is not set
-            to zero. Additional claims require preferred/minority-interest
-            coverage or a reviewed total.
-          </p>
+          <div className="manual-grid">{Object.entries(assumptionErrors(b.assumptions)).filter(([key])=>!["shares","daRate","wacc","annualGrowth","annualCapex","growthEarly","growthMiddle","growthLate"].includes(key)).map(([key])=>input(`${assumptionLabels[key as keyof typeof assumptionLabels]} (%)`,Number.isFinite(b.assumptions[key as keyof Assumptions])?b.assumptions[key as keyof Assumptions] as number:null,100,v=>setOverrides(prev=>({...prev,assumptions:{...prev.assumptions,[key]:v??NaN}}))))}</div>
+          <details className="coverage-details"><summary>Resolved financial inputs · editable</summary><div className="manual-grid">{financialFields.filter(([key])=>b.inputs[key]!==null && Number.isFinite(b.inputs[key]) && !Object.hasOwn(overrides.financial??{},key)).map(([key,label,scale])=>input(label,b.inputs[key],scale,v=>financial(key,v)))}</div></details>
+          <details className="coverage-details" open={!Number.isFinite(b.assumptions.wacc)}><summary>Discount rate components · advanced</summary>
           <div className="panel-heading">
             <h3>Discount rate components</h3>
             <span>
@@ -265,6 +229,7 @@ export default function AutomaticValuation({
               ? " (manual override; component calculation is reference only)"
               : ""}
           </p>
+          </details>
           <details className="coverage-details">
             <summary>Evidence, forecast rules and modeling limitations</summary>
             <div className="table-scroll">
@@ -306,42 +271,8 @@ export default function AutomaticValuation({
               rules make no industry-growth or management-guidance claims.
             </p>
           </details>
-          <details
-            className="coverage-details"
-            open={b.status === "Incomplete"}
-          >
-            <summary>Forecast overrides · optional manual estimates</summary>
-            <div className="manual-grid">
-              {(
-                [
-                  "growthEarly",
-                  "growthMiddle",
-                  "growthLate",
-                  "initialMargin",
-                  "targetMargin",
-                  "taxRate",
-                  "capexRate",
-                  "nwcRate",
-                  "terminalGrowth",
-                  "marginOfSafety",
-                ] as Exclude<keyof Assumptions, "annualGrowth" | "annualCapex">[]
-              ).map((key) =>
-                input(
-                  `${({ growthEarly: "Revenue growth · years 1–3", growthMiddle: "Revenue growth · years 4–5", growthLate: "Revenue growth · years 6–10", initialMargin: "Year 1 operating margin", targetMargin: "Target operating margin", taxRate: "Cash tax rate", capexRate: "CapEx / revenue", nwcRate: "NWC / incremental revenue", terminalGrowth: "Terminal growth", marginOfSafety: "Margin of safety" } as Partial<Record<keyof Assumptions, string>>)[key]} (%) · manual override`,
-                  Number.isFinite(b.assumptions[key]) ? b.assumptions[key]! : null,
-                  100,
-                  (v) =>
-                    setOverrides((prev) => {
-                      const next = { ...prev.assumptions };
-                      if (v === null) delete next[key];
-                      else next[key] = v;
-                      return { ...prev, assumptions: next };
-                    }),
-                ),
-              )}
-            </div>
-          </details>
-        </section>
+
+        </details>
       </div>
       {(b.dataset ?? historical.dataset) && (
         <Dashboard

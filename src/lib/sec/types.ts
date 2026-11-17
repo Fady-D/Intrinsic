@@ -90,6 +90,7 @@ export interface SecFact {
   form: string;
   filed: string;
   frame?: string;
+  sourceTag?: string;
   sourceUrl?: string;
   filingUrl?: string;
   retrievedAt?: string;

@@ -220,14 +220,17 @@ export function buildAutomaticBaseline(
     warnings.push(
       "Cash taxes use an explicit 25% policy estimate; no company effective-tax evidence was available.",
     );
-  // A narrow trade-working-capital proxy is derived only when all three components are reported.
+  // Keep a consistent scope across history. When inventory coverage is incomplete,
+  // estimate only the receivables/payables cycle; do not claim missing inventory is zero.
+  const includeInventory = annual.every(a => metric(a,"inventory") !== null);
+  if (!includeInventory) warnings.push("Working capital uses a narrow receivables-minus-payables estimate because inventory coverage is incomplete. Inventory and other operating balances are excluded, not assumed to be zero; review or override the investment ratio.");
   const nwcSamples = annual.slice(1).flatMap((a, i) => {
     const b = annual[i];
     const n = (q: FinancialPeriod) => {
       const ar = metric(q, "receivables"),
         inv = metric(q, "inventory"),
         ap = metric(q, "payables");
-      return ar !== null && inv !== null && ap !== null ? ar + inv - ap : null;
+      return ar !== null && (inv !== null || !includeInventory) && ap !== null ? ar - ap + (includeInventory ? inv! : 0) : null;
     };
     const x = n(a),
       y = n(b),
@@ -246,8 +249,8 @@ export function buildAutomaticBaseline(
   });
   const balanceNwc = annual.slice(-3).flatMap(a=>{
     const ar=metric(a,"receivables"), inv=metric(a,"inventory"), ap=metric(a,"payables"), r=metric(a,"revenue");
-    if(ar===null || inv===null || ap===null || r===null || r<=0) return [];
-    const ratio=(ar+inv-ap)/r;
+    if(ar===null || (includeInventory && inv===null) || ap===null || r===null || r<=0) return [];
+    const ratio=(ar-ap+(includeInventory ? inv! : 0))/r;
     return ratio>=0 && ratio<=.5 ? [ratio] : [];
   });
   const flowNwc = median(nwcSamples.slice(-3)),
@@ -259,7 +262,7 @@ export function buildAutomaticBaseline(
     "estimated",
     flowNwc === null && observedNwc !== null
       ? "Estimated incremental working-capital intensity from at least two complete nonnegative historical trade-NWC/revenue balances (0–50%). Assumes trade working capital scales with sales; not a reported incremental investment ratio."
-      : "Median change in receivables + inventory − trade payables divided by comparable revenue growth; bounded to 0–50% to avoid assuming future working-capital cash releases. Excludes other operating assets/liabilities.",
+      : "Consistent-scope median change in receivables + covered inventory − trade payables divided by comparable revenue growth; bounded to 0–50% to avoid assuming future working-capital cash releases. Excludes other operating assets/liabilities.",
   );
   if (observedNwc === null)
     issues.push(
@@ -273,7 +276,7 @@ export function buildAutomaticBaseline(
     investments = balance.shortInvestments.value,
     shareFacts = [
       balance.periodEndShares.value,
-      metric(p, "dilutedShares"),
+      metric(p, "dilutedShares") ?? (annual.at(-1) ? metric(annual.at(-1)!, "dilutedShares") : null),
     ].filter((v): v is number => v !== null && v > 0);
   const basis = data.preferredBasis;
   const shares = basis?.shares.value != null

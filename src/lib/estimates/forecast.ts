@@ -169,11 +169,11 @@ export function buildRevenuePlan(
 }
 const get = (p: FinancialPeriod, key: MetricKey) =>
   p.metrics[key]?.value ?? null;
-const tradeNwc = (p: FinancialPeriod) => {
+const tradeNwc = (p: FinancialPeriod, includeInventory: boolean) => {
   const a = get(p, "receivables"),
     b = get(p, "inventory"),
     c = get(p, "payables");
-  return a !== null && b !== null && c !== null ? a + b - c : null;
+  return a !== null && (b !== null || !includeInventory) && c !== null ? a - c + (includeInventory ? b! : 0) : null;
 };
 export function applyFiscalForecast(
   data: VerifiedFinancials,
@@ -212,8 +212,9 @@ export function applyFiscalForecast(
   >["elapsedActuals"];
   if (valuationEnd > annual.end) {
     const ytd = data.interim,
-      aNwc = tradeNwc(annual),
-      yNwc = ytd ? tradeNwc(ytd) : null;
+      includeInventory = data.annual.every(p=>get(p,"inventory") !== null),
+      aNwc = tradeNwc(annual, includeInventory),
+      yNwc = ytd ? tradeNwc(ytd, includeInventory) : null;
     if (
       !ytd ||
       ytd.end !== valuationEnd ||

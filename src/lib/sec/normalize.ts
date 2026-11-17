@@ -25,7 +25,7 @@ export const tags = {
     "PaymentsToAcquirePropertyPlantAndEquipment",
     "PaymentsToAcquireProductiveAssets",
   ],
-  depreciation: ["DepreciationDepletionAndAmortization"],
+  depreciation: ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization"],
   stockCompensation: ["ShareBasedCompensation"],
   dilutedShares: ["WeightedAverageNumberOfDilutedSharesOutstanding"],
   cash: ["CashAndCashEquivalentsAtCarryingValue"],
@@ -106,6 +106,7 @@ function splitTag(tag: string): [string, string] {
   ];
 }
 function metricTags(ctx: Context, key: MetricKey): string[] {
+  if(ctx.cik==="0001403161" && key==="dilutedShares") return ["v:ClassAEquivalentDilutedShares"];
   if (ctx.taxonomy === "us-gaap" && key === "minorityClaims")
     return [...tags.minorityClaims, ...(issuerConcepts[ctx.cik]?.minority ?? [])];
   if (ctx.taxonomy === "ifrs-full" && key === "periodEndShares")
@@ -230,13 +231,17 @@ function getTag(
     return missing(
       `Missing ${tag} for ${start ? start + " – " : ""}${end} (${unit}).`,
     );
-  const f = matches[0];
-  if (
-    matches.some(
-      (x) => x.filed === f.filed && x.accn === f.accn && x.val !== f.val,
-    )
-  )
+  const same = matches.filter(x => x.filed === matches[0].filed && x.accn === matches[0].accn);
+  const precision = (x: SecFact): number | null => {
+    const declared = x.decimals || same.find(y => y.val === x.val && y.decimals)?.decimals;
+    return declared === "INF" ? -Infinity : declared && /^-?\d+$/.test(declared) ? -Number(declared) : null;
+  };
+  // Prefer the finest filing precision only when every reported rounding interval overlaps it.
+  const f = [...same].sort((a,b) => (precision(a) ?? Infinity) - (precision(b) ?? Infinity))[0];
+  const tolerance = (x: SecFact) => { const p=precision(x); return p===null ? 0 : p===-Infinity ? 0 : .5 * 10 ** p; };
+  if (same.some(x => x.val !== f.val && (precision(x) === null || Math.abs(x.val-f.val) > tolerance(x)+tolerance(f))))
     return missing(`Conflicting same-filing facts for ${tag} on ${end}.`);
+  const rounded = same.some(x => x.val !== f.val);
   if (
     [
       "ifrs-full:PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
@@ -264,7 +269,7 @@ function getTag(
     value: f.val / 1e6,
     status: "reported",
     reason:
-      tag === "PaymentsToAcquireProductiveAssets"
+      rounded ? "Rounded duplicate facts reconciled using the filing’s declared XBRL decimals." : tag === "PaymentsToAcquireProductiveAssets"
         ? "Cash purchases of productive assets; review the filing line and scope before using as forecast CapEx."
         : undefined,
     sources: [
@@ -277,7 +282,7 @@ function getTag(
         start: f.start,
         end: f.end,
         accession: f.accn,
-        tag: `${namespace}:${concept}`,
+        tag: f.sourceTag ?? `${namespace}:${concept}`,
         unit,
         retrievedAt: f.retrievedAt ?? ctx.retrievedAt,
       },
@@ -398,8 +403,12 @@ function debt(ctx: Context, end: string): Metric {
       "IFRS current + noncurrent borrowings. Confirm lease and other debt coverage before modeling.",
     );
   }
-  const current = getTag(ctx, "DebtCurrent", undefined, end, "USD"),
-    noncurrent = getTag(ctx, "LongTermDebtNoncurrent", undefined, end, "USD");
+  const current = getTag(ctx, "DebtCurrent", undefined, end, "USD");
+  let noncurrent = getTag(ctx, "LongTermDebtNoncurrent", undefined, end, "USD");
+  if(noncurrent.value===null && ctx.cik==="0000796343") {
+    const legacy=getTag(ctx,"LongTermDebt",undefined,end,"USD");
+    if(legacy.sources[0]?.accession==="0000796343-26-000156") noncurrent=legacy;
+  }
   if (
     current.value !== null &&
     noncurrent.value !== null &&
@@ -426,9 +435,11 @@ function debt(ctx: Context, end: string): Metric {
       end,
       "USD",
     );
+  if(aggregate.value===null) aggregate=getTag(ctx,"LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",undefined,end,"USD");
   if (aggregate.value !== null) {
     const commercial = getTag(ctx, "CommercialPaper", undefined, end, "USD");
-    const short = getTag(ctx, "ShortTermBorrowings", undefined, end, "USD");
+    let short = getTag(ctx, "ShortTermBorrowings", undefined, end, "USD");
+    if(short.value===null) short=getTag(ctx,"NotesAndLoansPayable",undefined,end,"USD");
     // ShortTermBorrowings may contain commercial paper; use it once when explicitly reported.
     const addon = short.value !== null ? short : commercial;
     return addon.value === null
@@ -452,6 +463,9 @@ function debt(ctx: Context, end: string): Metric {
     return missing(
       "No complete, non-overlapping long-term debt total. Review total debt manually.",
     );
+  const reviewedLongScopes:Record<string,string>={"0000789019":"0001193125-26-436133","0001403161":"0001403161-26-000134"};
+  if(long.sources.length && long.sources.every(s=>s.accession===reviewedLongScopes[ctx.cik]))
+    return {...long,reason:"Current plus noncurrent borrowing reconciles to total debt in this independently reviewed filing; Visa also explicitly reports no outstanding commercial paper. Finance-lease scope requires separate review; this exception does not carry forward to unreviewed filings."};
   const short = getTag(ctx, "ShortTermBorrowings", undefined, end, "USD"),
     commercial = getTag(ctx, "CommercialPaper", undefined, end, "USD");
   const addon = short.value !== null ? short : commercial;
@@ -814,6 +828,24 @@ export function normalizeFinancials(
         warnings.push(`${key}: ${performance.metrics[key].reason}`);
   if (balance.debt.value === null)
     warnings.push(`Debt: ${balance.debt.reason}`);
+  if(balance.preferredClaims.value===null && taxonomy==="us-gaap") {
+    for(const tag of ["PreferredStockSharesOutstanding","PreferredStockSharesIssued"]) {
+      const shares=getTag(ctx,tag,undefined,balanceEnd,"shares");
+      if(shares.value===0) {balance.preferredClaims={...shares,status:"derived",reason:"Explicitly reported zero preferred shares; no preferred claim inferred from tag absence."};break;}
+    }
+  }
+  // Reviewed complete parent-equity statements: common capital, retained earnings,
+  // AOCI (and treasury shares at KO), with no outstanding preferred instrument.
+  // This evidence is filing-specific, never a ticker-wide absence default.
+  const commonOnlyEquity: Record<string,string> = {"0000789019":"0001193125-26-436133","0000021344":"0001628280-26-067844"};
+  if(balance.preferredClaims.value===null && balance.bookEquity.value!==null && balance.bookEquity.sources.length &&
+    balance.bookEquity.sources.every(s=>s.accession===commonOnlyEquity[ctx.cik] && s.end===balanceEnd))
+    balance.preferredClaims={value:0,status:"derived",sources:balance.bookEquity.sources,reason:"Independent review of this filing’s complete parent-equity statement establishes common-only issued equity, with no outstanding preferred instrument disclosed. This absence review is accession-specific and does not carry forward to new filings."};
+  if(balance.minorityClaims.value===null && taxonomy==="us-gaap") {
+    const assets=getTag(ctx,"Assets",undefined,balanceEnd,"USD"),liabilities=getTag(ctx,"Liabilities",undefined,balanceEnd,"USD"),equity=getTag(ctx,"StockholdersEquity",undefined,balanceEnd,"USD");
+    if([assets,liabilities,equity].every(m=>m.value!==null) && new Set([assets,liabilities,equity].map(m=>m.sources[0]?.accession)).size===1 && assets.value! - liabilities.value! - equity.value! === 0)
+      balance.minorityClaims=derived([assets,liabilities,equity],()=>0,"Reported assets minus liabilities minus parent stockholders’ equity reconciles exactly to zero; no separately recognized noncontrolling/mezzanine balance. This does not establish absence of off-balance-sheet contingencies.");
+  }
   let preferredBasis: VerifiedFinancials["preferredBasis"];
   const pref = balance.preferredClaims;
   if (taxonomy === "us-gaap" && pref.value !== null && pref.value > 0) {
@@ -835,6 +867,17 @@ export function normalizeFinancials(
         balance.preferredClaims = claim;
         warnings.push("Preferred stock uses a liquidation-basis valuation proxy, based on reported (potentially rounded) outstanding shares. Future conversion terms, dividend settlement choices and unpaid cumulative dividends require review; they are not separately priced by this DCF.");
       }
+    }
+  }
+  if(ctx.cik==="0001403161") {
+    balance.periodEndShares=missing("Class-specific Visa common shares are not the aggregate Class A-equivalent denominator.");
+    const diluted=last?.metrics.dilutedShares;
+    if(balanceEnd===last?.end && diluted?.value!==null && diluted?.value!==undefined && diluted.sources.every(s=>s.accession==="0001403161-26-000134")) {
+      preferredBasis={shares:{...diluted,reason:"Visa Note 16 diluted Class A-equivalent denominator includes all B/C common and participating securities on an as-converted basis; do not sum the class-specific counts."},claim:{value:0,status:"derived",sources:diluted.sources,reason:"As-converted valuation basis: participating preferred securities are included in diluted Class A equivalents, so no second preferred liquidation deduction is made."}};
+      balance.preferredClaims=preferredBasis.claim;
+      balance.minorityClaims={value:0,status:"derived",sources:diluted.sources,reason:"Reviewed 2026 Visa consolidated statements and equity/EPS disclosures establish no separately recognized noncontrolling claim. This review is accession-specific."};
+      balance.bookEquity=getTag(ctx,"StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",undefined,balanceEnd,"USD");
+      warnings.push("Visa uses diluted Class A-equivalent shares and an as-converted preferred basis. Current conversion terms and noncash preferred distributions remain review items.");
     }
   }
   const subset = issuerConcepts[ctx.cik]?.redeemableSubset;

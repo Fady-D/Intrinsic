@@ -173,8 +173,11 @@ export class SecEdgarProvider implements FinancialResearchProvider {
     }
     const supplementalWarnings: string[] = [];
     const parsed = parseCompanyFacts(facts);
-    if (issuerConcepts[identity.cik] ||
-      (parsed.facts["us-gaap"]?.Depreciation && !parsed.facts["us-gaap"]?.DepreciationDepletionAndAmortization)) {
+    const preliminary = normalizeFinancials(parsed, submissions, identity.ticker, this.http.retrievedAt(url) ?? metadataRetrieved, asOf);
+    const performance = preliminary.ttm ?? preliminary.annual.at(-1);
+    const needsSupplement = ["debt","preferredClaims","minorityClaims"].some(k => preliminary.latestBalance.metrics[k as "debt"].value === null) ||
+      ["revenue","operatingIncome","capex","depreciation","dilutedShares"].some(k => performance?.metrics[k as "revenue"].value == null);
+    if (needsSupplement || issuerConcepts[identity.cik]) {
       const recent = sub.filings.recent;
       const filings = recent.form.flatMap((form, i): SubmissionFiling[] => {
         const accessionNumber = recent.accessionNumber?.[i], filingDate = recent.filingDate[i],
@@ -198,7 +201,7 @@ export class SecEdgarProvider implements FinancialResearchProvider {
           mergeFilingFacts(parsed, xml, filing, instanceUrl, base + filing.primaryDocument,
             this.http.retrievedAt(instanceUrl) ?? new Date().toISOString());
         } catch {
-          supplementalWarnings.push(`Supplemental filing XBRL unavailable for ${filing.reportDate}; unresolved claims or D&A remain missing.`);
+          supplementalWarnings.push(`Supplemental filing XBRL unavailable for ${filing.reportDate}; unresolved financial fields remain missing.`);
         }
       }
     }

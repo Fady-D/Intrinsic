@@ -133,7 +133,7 @@ Reset returns to the automatically derived baseline. Scenario changes are labele
 
 ## Phase 4.1 forward revenue forecasts
 
-Choose **Analyst Consensus**, **Historical Growth** or **Custom Forecast** in the forecast-method panel. No FMP key is required for historical modeling, ten custom annual growth rates or user-entered annual revenue forecasts. Manual revenue entries use fiscal-end dates, the SEC reporting currency and amounts in millions; they are labeled user-provided, not retrieved consensus.
+Use the single **Revenue forecasts** table and its **Forecast source** selector. No FMP key is required for historical modeling, ten custom annual growth rates or user-entered annual revenue forecasts. Manual revenue entries use fiscal-end dates, the SEC reporting currency and amounts in millions; they are labeled user-provided, not retrieved consensus.
 
 Optionally set `FMP_API_KEY` in ignored `.env.local` and restart Next.js. The server uses FMP stable annual analyst estimates plus matching annual income statements to verify reporting currency (profile/trading currency is not used). Endpoint entitlement may require a subscription. Missing key, restricted/empty responses, rate limits, stale revision dates, unknown analyst counts and unaligned fiscal dates are disclosed; unusable consensus falls back explicitly to Historical Growth. Retrieval date does not establish analyst revision freshness. Live FMP access was not verified because no key/subscription was configured; targeted fixtures use the documented stable response fields.
 
@@ -141,4 +141,6 @@ Annual estimates use the latest completed fiscal year as the revenue anchor. Mod
 
 For partially completed fiscal years, annual-mode valuation requires aligned YTD EBIT, D&A, CapEx and trade-NWC balances. Modeled elapsed FCFF (using the chosen tax rate) is deducted from FY1, and remaining cash flows/terminal value are discounted from the latest reporting date with fractional-year periods. This is a reporting-date valuation, not a precisely live-date valuation. Missing reconciliation or full-year projections below reported YTD revenue/D&A/CapEx block the affected valuation; no TTM/full-year overlap is silently counted. Historical Growth retains its existing rolling forecast.
 
-The selected-scenario revenue table permits individual annual-growth edits in consensus/custom modes. Bear/bull profiles rerun the same DCF; stage sliders remain available in Historical Growth. Scenario edits and unrelated assumptions survive method switching. Reset restores the mode's original baseline.
+The single revenue table accepts annual revenue or growth edits and labels each override. Select **Fiscal-year model / manual estimates** to enter next-year fiscal revenues without an API key; **Historical rolling-year model** uses a TTM anchor. Revenue entries remain fixed if an earlier year changes; growth entries remain rates. Bear/bull rerun the same DCF with alternative assumptions. Reset revenue edits is explicit. Advanced capital settings and source evidence are collapsed by default; genuinely unresolved inputs appear in one Needs Review panel.
+
+The November 17, 2026 filing regression results and remaining source limitations are recorded in [validation](docs/production-validation.md).

@@ -160,18 +160,12 @@ export default function Dashboard({
     [tickerError, setTickerError] = useState(""),
     [loading, setLoading] = useState(false);
   const [capitalEntryError,setCapitalEntryError] = useState<string | null>(null);
-  const [annualEntryError,setAnnualEntryError] = useState<string | null>(null);
   const [slowdown, setSlowdown] = useState(0),
     [period, setPeriod] = useState<SlowdownPeriod>("all");
-  const [annualEdits, setAnnualEdits] = useState<
-    Record<string, Record<string, number[]>>
-  >({});
-  const revision = data.company.ticker,
-    annualMode = !!forecastPlan;
+  const annualMode = !!forecastPlan;
   const effectiveScenarios = scenarios.map((s) => {
     const annual = annualMode
-      ? (annualEdits[revision]?.[s.id] ??
-        defaults.find((d) => d.id === s.id)?.assumptions.annualGrowth ?? stageGrowths(s.assumptions))
+      ? (defaults.find((d) => d.id === s.id)?.assumptions.annualGrowth ?? stageGrowths(s.assumptions))
       : undefined;
     return {
       ...s,
@@ -195,8 +189,6 @@ export default function Dashboard({
     adjusted = evaluateSelected(
       applySlowdown(selected.assumptions, slowdown, period),
     );
-  const historicalComparison = forecastPlan?.mode === "consensus" && forecastPlan.historicalGrowths
-    ? evaluateSelected({ ...applySlowdown(selected.assumptions, slowdown, period), annualGrowth: applySlowdown({ ...selected.assumptions, annualGrowth: forecastPlan.historicalGrowths }, slowdown, period).annualGrowth }) : null;
   const capitalRisk = original.result ? [-.02,.02].some(delta=>{
     const test=evaluateSelected({...selected.assumptions,capexRate:selected.assumptions.capexRate+delta}).result;
     return test && Math.abs(test.valuePerShare-original.result!.valuePerShare)> .2*Math.max(1,Math.abs(original.result!.valuePerShare));
@@ -227,6 +219,32 @@ export default function Dashboard({
   const chartScenarios = outputs
     .filter((s) => s.result)
     .map((s) => ({ name: s.label, value: s.result!.valuePerShare }));
+  const assumptionControls=(advanced:boolean)=>fields
+                .filter(
+                  (f) =>
+                    (!["capexNearRate","capexHoldYears","capexNormalizationYears","daNearRate","terminalRoic"].includes(f.key) || selected.assumptions[f.key] !== undefined) && (demo && !annualMode ||
+                    !["growthEarly", "growthMiddle", "growthLate"].includes(
+                      f.key,
+                    )),
+                )
+                .filter(f=> (demo || f.key!=="shares"))
+                .filter(f=>advanced === ["capexNearRate","capexHoldYears","capexNormalizationYears","capexCurve","daNearRate","terminalRoic","financeLeaseInvestmentRate","financeLeaseYtdAdditions"].includes(f.key))
+                .map(({ key, ...field }) => (
+                  <AssumptionInput
+                    key={`${active}-${key}`}
+                    {...field}
+                    label={key === "targetMargin" && selected.assumptions.daNearRate !== undefined ? "Year 10 margin · at starting D&A intensity" : key === "capexRate" && selected.assumptions.capexNearRate !== undefined ? "Long-term CapEx / revenue" : key === "daRate" && selected.assumptions.daNearRate !== undefined ? "Long-term D&A / revenue" : field.label}
+                    error={fieldErrors[key]}
+                    hint={
+                      !demo &&
+                      Object.hasOwn(scenarioEdits[active] ?? {},key)
+                        ? `${field.hint ?? ""} Manual override of automatic baseline.`
+                        : field.hint
+                    }
+                    value={Number.isFinite(selected.assumptions[key]) ? selected.assumptions[key]! : null}
+                    onChange={(v) => change(key, v)}
+                  />
+                ));
   return (
     <div className="workspace">
       <aside className="sidebar">
@@ -280,7 +298,7 @@ export default function Dashboard({
             <div className="page-heading">
               <div>
                 <div className="eyebrow">FUNDAMENTAL RESEARCH</div>
-                <h1>A clearer view of value.</h1>
+                <h1>Valuation results</h1>
                 <p>
                   Explore the assumptions behind a business’s intrinsic value.
                 </p>
@@ -348,7 +366,85 @@ export default function Dashboard({
                 recommendation to buy or sell.
               </p>
             </div>
-            <div className="section-heading">
+          </section>
+          {(original.error || capitalEntryError) && !blockingError && <section className="panel" aria-label="Valuation readiness">
+            <h3>{blockingError ? "Missing required inputs" : (Object.keys(fieldErrors).length || capitalEntryError) ? "Invalid user assumptions" : original.error ? "Financial statement consistency requires review" : demo ? "Ready to calculate" : "Provisional — estimated assumptions"} · {selected.label}</h3>
+            {capitalEntryError && <p role="alert">{capitalEntryError}</p>}
+            {original.error && <p role="alert">{selected.label}: {original.error}</p>}
+            {fieldErrors.annualGrowth && <p role="alert">{fieldErrors.annualGrowth} Correct the corresponding annual growth input below.</p>}
+            <p>Each scenario is calculated independently. Invalid edits are retained for correction.</p>
+          </section>}
+          {result && result.terminalWeight!==null && Math.abs(result.terminalWeight)>.6 && <p className="alert">Terminal value contributes {percent(result.terminalWeight)} of enterprise value. Review sustainable ROIC, growth and WACC; distant cash flows dominate this estimate.</p>}
+          {result && Math.abs(result.terminalYear.fcff-result.forecast[9].fcff)>.25*Math.max(1,Math.abs(result.forecast[9].fcff)) && <p className="alert">Terminal FCFF changes by more than 25% from year 10. Review the transition from explicit investment spending to stable ROIC economics; the terminal assumption may require a longer transition.</p>}
+          <div className="model-layout">
+            <section className="panel assumptions-panel" id="assumptions">
+              <div className="panel-heading">
+                <div>
+                  <div className="eyebrow">
+                    {demo ? "MODEL INPUTS" : "AUTOMATIC BASELINE · EDITABLE"}
+                  </div>
+                  <h2>{selected.label} case assumptions</h2>
+                </div>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setCapitalEntryError(null);
+                    setScenarioEdits(prev=>({...prev,[active]:{}}));
+                    setSlowdown(0);
+                  }}
+                >
+                  Reset case ↺
+                </button>
+              </div>
+              <div className="segmented" aria-label="Edit scenario">
+                {scenarios.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => setActive(s.id)}
+                    aria-pressed={active === s.id}
+                    className={active === s.id ? "active" : ""}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+              {assumptionControls(false)}
+              <details className="coverage-details"><summary>Advanced capital and terminal assumptions</summary>{assumptionControls(true)}</details>
+              <details className="coverage-details">
+                <summary>Annual cash CapEx overrides · {selected.label}</summary>
+                <p>Ratios are percentages of each year’s revenue. Unchanged years follow the model. YTD spending and supported total-reinvestment requirements remain floors; no second reinvestment charge is added. Terminal CapEx uses the long-term ratio. Revenue forecasts are unchanged.</p>
+                {fieldErrors.annualCapex && <p role="alert">{fieldErrors.annualCapex}</p>}
+                <div className="manual-grid">{Array.from({length:10},(_,i)=>{
+                  const explicit=selected.assumptions.annualCapex?.[i];
+                  const rate=explicit ?? projectedCapexRate(selected.assumptions.capexRate,selected.assumptions.capexNearRate,i+1,selected.assumptions.capexNormalizationYears,selected.assumptions.capexHoldYears,selected.assumptions.capexCurve);
+                  return <label className="manual-field" key={i}>FY{i+1} · {forecastPlan?.rows[i]?.fiscalEnd ?? `year ${i+1}`} · {explicit!=null?"User override":"Historical model"}
+                    <input type="number" step="any" aria-label={`${selected.label} FY${i+1} cash CapEx ratio`} value={Number.isFinite(rate)?Number((rate*100).toFixed(4)):""} onChange={e=>{
+                      if(e.target.value==="") {setCapitalEntryError(`${selected.label} FY${i+1} CapEx ratio is required; the previous forecast is retained.`);return;}
+                      setCapitalEntryError(null);
+                      const next=[...(selected.assumptions.annualCapex ?? Array(10).fill(null))];next[i]=Number(e.target.value)/100;
+                      setScenarioEdits(prev=>({...prev,[active]:{...prev[active],annualCapex:next}}));
+                    }}/>
+                  </label>;
+                })}</div>
+                <button className="text-button" onClick={()=>{setCapitalEntryError(null);setScenarioEdits(prev=>({...prev,[active]:{...prev[active],annualCapex:undefined}}));}}>Restore modeled annual CapEx</button>
+              </details>
+              {capitalRisk && <p role="alert" className="alert">High investment sensitivity: a ±2 percentage-point change in long-term CapEx/revenue moves the selected case value by more than 20%. Review capital efficiency and terminal assumptions; this is not a verified fair value.</p>}
+              <p className="table-note">Investment settings are historical estimates unless marked as overrides. D&A is normalized after a lag; operating margins are quoted at starting D&A intensity, so increased depreciation also reduces EBIT. Cash CapEx does not include noncash lease additions. Unless lease additions are explicitly entered, they remain unavailable and this is a cash-CapEx-scope forecast. Enter current lease obligations in total debt only once. Long-term capital intensity is uncertain and can materially change intrinsic value.</p>
+              <button
+                className="reset-all"
+                onClick={() => {
+                  setCapitalEntryError(null);
+                  setScenarioEdits({});
+                  setSlowdown(0);
+                  setPeriod("all");
+                }}
+              >
+                {demo
+                  ? "Reset all scenarios to defaults"
+                  : "Reset scenarios to automatic baseline"}
+              </button>
+            </section>
+            <div className="model-results"><section id="scenarios">            <div className="section-heading">
               <h2>Valuation at a glance</h2>
               <span>
                 {demo
@@ -371,7 +467,7 @@ export default function Dashboard({
                   key={s.id}
                   label={`${s.label} intrinsic value`}
                   value={
-                    s.result ? money(s.result.valuePerShare) : `${s.label}: ${s.error ?? "Required data unavailable."}`
+                    s.result ? money(s.result.valuePerShare) : "Needs review"
                   }
                   note={
                     s.id === "base"
@@ -416,333 +512,7 @@ export default function Dashboard({
                 note={`Discount to estimated fair value: ${percent(base?.discountToFairValue ?? null)}`}
               />
             </div>
-          </section>
-          <section className="panel" aria-label="Valuation readiness">
-            <h3>{blockingError ? "Missing required inputs" : (Object.keys(fieldErrors).length || annualEntryError || capitalEntryError) ? "Invalid user assumptions" : original.error ? "Financial statement consistency requires review" : demo ? "Ready to calculate" : "Provisional — estimated assumptions"} · {selected.label}</h3>
-            {capitalEntryError && <p role="alert">{capitalEntryError}</p>}
-            {annualEntryError && <p role="alert">{annualEntryError} The last valid calculation is retained.</p>}
-            {original.error && <p role="alert">{selected.label}: {original.error}</p>}
-            {fieldErrors.annualGrowth && <p role="alert">{fieldErrors.annualGrowth} Correct the corresponding annual growth input below.</p>}
-            <p>Each scenario is calculated independently. Invalid edits are retained for correction; no earlier valuation is substituted for them.</p>
-          </section>
-          {result && result.terminalWeight!==null && Math.abs(result.terminalWeight)>.6 && <p className="alert">Terminal value contributes {percent(result.terminalWeight)} of enterprise value. Review sustainable ROIC, growth and WACC; distant cash flows dominate this estimate.</p>}
-          {result && Math.abs(result.terminalYear.fcff-result.forecast[9].fcff)>.25*Math.max(1,Math.abs(result.forecast[9].fcff)) && <p className="alert">Terminal FCFF changes by more than 25% from year 10. Review the transition from explicit investment spending to stable ROIC economics; the terminal assumption may require a longer transition.</p>}
-          {forecastPlan && (
-            <section className="panel">
-              <div className="panel-heading">
-                <h2>
-                  Active forecast:{" "}
-                  {forecastPlan.mode === "consensus"
-                    ? "Analyst / supplied annual forecasts"
-                    : forecastPlan.mode === "custom"
-                      ? "Custom Forecast"
-                      : "Historical Growth"}
-                </h2>
-                <span>{selected.label} scenario · before slowdown</span>
-              </div>
-              <p className="table-note">
-                {forecastPlan.warnings.join(" ")}{" "}
-                {data.fiscalForecast
-                  ? `Revenue anchored to ${data.fiscalForecast.anchorEnd}; cash-flow valuation at ${data.fiscalForecast.valuationEnd}. Elapsed YTD FCFF uses actual operating components with the modeled tax rate and trade-NWC proxy; only remaining FY1 cash flow is discounted.`
-                  : ""}
-              </p>
-              {blockingError && (
-                <div role="alert" className="alert">
-                  {blockingError}
-                </div>
-              )}
-              {forecastPlan.explanation && <p className="table-note">{forecastPlan.explanation}</p>}
-              {historicalComparison && <div className="table-scroll">
-                <p>Growth-only sensitivity: same fiscal anchor, margins, tax, WACC, capital policy, shares and safety discount. Historical growth is the prior historical model, on this same fiscal basis. Neither forecast is necessarily more accurate.</p>
-                <table><thead><tr><th>Measure</th><th>Historical Growth</th><th>Hybrid / adjusted forecast</th></tr></thead><tbody>
-                {([
-                  ["Year 10 revenue", historicalComparison.result?.forecast[9].revenue, result?.forecast[9].revenue],
-                  ["Year 10 operating income", historicalComparison.result?.forecast[9].ebit, result?.forecast[9].ebit],
-                  ["Year 10 FCFF", historicalComparison.result?.forecast[9].fcff, result?.forecast[9].fcff],
-                  ["Intrinsic value / share", historicalComparison.result?.valuePerShare, result?.valuePerShare],
-                  ["Safety purchase price / share", historicalComparison.result?.entryPrice, result?.entryPrice],
-                ] as [string,number|undefined,number|undefined][]).map(([label,h,v])=><tr key={label}><th>{label}</th><td>{millions(h??null)}</td><td>{millions(v??null)}</td></tr>)}
-                </tbody></table>
-                <p>{historicalComparison.error ?? (historicalComparison.result && result ? `Intrinsic-value difference ${(result.valuePerShare-historicalComparison.result.valuePerShare).toFixed(2)} per share follows only from the revenue paths and their associated reinvestment requirements.` : "Comparison unavailable until both projections can be valued.")}</p>
-              </div>}
-              <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{forecastPlan.mode==="historical"?"Rolling year end":"Fiscal year end"}</th>
-                      <th>Revenue (USD m)</th>
-                      <th>Growth (%)</th>
-                      <th>Forecast source</th>
-                      <th>Reference range / analysts</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {forecastPlan.rows.map((row, i) => {
-                      const current =
-                          selected.assumptions.annualGrowth ??
-                          stageGrowths(selected.assumptions),
-                        baseline =
-                          defaults.find((s) => s.id === active)?.assumptions
-                            .annualGrowth ??
-                          stageGrowths(
-                            defaults.find((s) => s.id === active)!.assumptions,
-                          );
-                      const edited = current
-                        .slice(0, i + 1)
-                        .some((g, j) => g !== baseline[j]);
-                      const est = row.estimate;
-                      return (
-                        <tr key={i}>
-                          <th>{row.fiscalEnd}</th>
-                          <td>
-                            {original.result
-                              ? millions(original.result.forecast[i].revenue)
-                              : "Unavailable · see baseline above"}
-                          </td>
-                          <td>
-                            {annualMode ? (
-                              <input
-                                aria-label={`${selected.label} FY${i + 1} annual growth`}
-                                aria-invalid={!!fieldErrors.annualGrowth}
-                                className="annual-growth-input"
-                                type="number"
-                                step="any"
-                                value={
-                                  Number.isFinite(current[i])
-                                    ? Number((current[i] * 100).toFixed(5))
-                                    : ""
-                                }
-                                onChange={(e) => {
-                                  if(e.target.value === "") { setAnnualEntryError(`${selected.label} FY${i+1} requires a growth rate.`); return; }
-                                  setAnnualEntryError(null);
-                                  const next = [...current];
-                                  next[i] = Number(e.target.value) / 100;
-                                  setAnnualEdits((prev) => ({
-                                    ...prev,
-                                    [revision]: {
-                                      ...prev[revision],
-                                      [active]: next,
-                                    },
-                                  }));
-                                }}
-                              />
-                            ) : (
-                              percent(current[i])
-                            )}
-                          </td>
-                          <td>
-                            {edited
-                              ? "Manually overridden (including upstream growth)"
-                              : active !== "base" && annualMode
-                                ? "Scenario model adjustment"
-                                : row.source}
-                            {est && (
-                              <small className="estimate-reference">
-                                {est.source} · retrieved {est.retrievedAt}
-                                {est.note ? ` · ${est.note}` : ""}
-                                {est.ebit !== null
-                                  ? ` · reference EBIT ${millions(est.ebit)}m (unused)`
-                                  : ""}
-                              </small>
-                            )}
-                          </td>
-                          <td>
-                            {est
-                              ? `${est.low === null ? "N/A" : millions(est.low)} – ${est.high === null ? "N/A" : millions(est.high)} / ${est.analysts ?? "N/A"}`
-                              : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-          <section id="scenarios">
-            <div className="section-heading">
-              <h2>Three perspectives. One framework.</h2>
-              <span>Each scenario is independently editable</span>
-            </div>
-            {!demo && (
-              <p className="table-note">
-                Conservative bear–base estimate range:{" "}
-                {outputs[0].result
-                  ? money(outputs[0].result.valuePerShare)
-                  : "Unavailable"}{" "}
-                to {base ? money(base.valuePerShare) : "Unavailable"}. Bull
-                values reflect a more favorable scenario, not a purchase
-                recommendation.
-              </p>
-            )}
-            <div className="scenario-grid">
-              {outputs.map((s) => (
-                <button
-                  key={s.id}
-                  className={`scenario-card ${active === s.id ? "selected" : ""}`}
-                  onClick={() => setActive(s.id)}
-                  aria-pressed={active === s.id}
-                >
-                  <div className="scenario-title">
-                    <span className={`scenario-dot ${s.id}`} />
-                    {s.label} case
-                    <span>{active === s.id ? "EDITING" : "EDIT →"}</span>
-                  </div>
-                  <strong>
-                    {s.result
-                      ? money(s.result.valuePerShare)
-                      : `${s.label}: ${s.error ?? "Required data unavailable."}`}
-                  </strong>
-                  <span className="scenario-upside">
-                    {s.error ??
-                      `${percent(s.result?.upside ?? null)} implied upside / downside`}
-                  </span>
-                  <dl>
-                    <div>
-                      <dt>
-                        {annualMode
-                          ? "Mean growth · 1–3 / 4–5 / 6–10"
-                          : "Growth · 1–3 / 4–5 / 6–10"}
-                      </dt>
-                      <dd>
-                        {[
-                          s.assumptions.growthEarly,
-                          s.assumptions.growthMiddle,
-                          s.assumptions.growthLate,
-                        ]
-                          .map(percent)
-                          .join(" / ")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Terminal margin / WACC</dt>
-                      <dd>
-                        {percent(s.assumptions.targetMargin)} /{" "}
-                        {percent(s.assumptions.wacc)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Enterprise value</dt>
-                      <dd>
-                        {s.result
-                          ? `$${millions(s.result.enterpriseValue)}m`
-                          : "N/A"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>
-                        {percent(s.assumptions.marginOfSafety)} safety entry
-                      </dt>
-                      <dd>{s.result ? money(s.result.entryPrice) : "N/A"}</dd>
-                    </div>
-                  </dl>
-                </button>
-              ))}
-            </div>
-          </section>
-          <div className="model-layout">
-            <section className="panel assumptions-panel" id="assumptions">
-              <div className="panel-heading">
-                <div>
-                  <div className="eyebrow">
-                    {demo ? "MODEL INPUTS" : "AUTOMATIC BASELINE · EDITABLE"}
-                  </div>
-                  <h2>{selected.label} case assumptions</h2>
-                </div>
-                <button
-                  className="text-button"
-                  onClick={() => {
-                    setCapitalEntryError(null);
-                    setAnnualEntryError(null);
-                    setScenarioEdits(prev=>({...prev,[active]:{}}));
-                    setAnnualEdits((prev) => ({
-                      ...prev,
-                      [revision]: {
-                        ...prev[revision],
-                        [active]:
-                          defaults.find((s) => s.id === active)?.assumptions
-                            .annualGrowth ?? stageGrowths(defaults.find(s=>s.id===active)!.assumptions),
-                      },
-                    }));
-                    setSlowdown(0);
-                  }}
-                >
-                  Reset case ↺
-                </button>
-              </div>
-              <div className="segmented" aria-label="Edit scenario">
-                {scenarios.map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => setActive(s.id)}
-                    aria-pressed={active === s.id}
-                    className={active === s.id ? "active" : ""}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-              {fields
-                .filter(
-                  (f) =>
-                    (!["capexNearRate","capexHoldYears","capexNormalizationYears","daNearRate","terminalRoic"].includes(f.key) || selected.assumptions[f.key] !== undefined) && (!annualMode ||
-                    !["growthEarly", "growthMiddle", "growthLate"].includes(
-                      f.key,
-                    )),
-                )
-                .map(({ key, ...field }) => (
-                  <AssumptionInput
-                    key={`${active}-${key}`}
-                    {...field}
-                    label={key === "targetMargin" && selected.assumptions.daNearRate !== undefined ? "Year 10 margin · at starting D&A intensity" : key === "capexRate" && selected.assumptions.capexNearRate !== undefined ? "Long-term CapEx / revenue" : key === "daRate" && selected.assumptions.daNearRate !== undefined ? "Long-term D&A / revenue" : field.label}
-                    error={fieldErrors[key]}
-                    hint={
-                      !demo &&
-                      Object.hasOwn(scenarioEdits[active] ?? {},key)
-                        ? `${field.hint ?? ""} Manual override of automatic baseline.`
-                        : field.hint
-                    }
-                    value={Number.isFinite(selected.assumptions[key]) ? selected.assumptions[key]! : null}
-                    onChange={(v) => change(key, v)}
-                  />
-                ))}
-              <details className="coverage-details">
-                <summary>Annual cash CapEx overrides · {selected.label}</summary>
-                <p>Ratios are percentages of each year’s revenue. Unchanged years follow the model. YTD spending and supported total-reinvestment requirements remain floors; no second reinvestment charge is added. Terminal CapEx uses the long-term ratio. Revenue forecasts are unchanged.</p>
-                {fieldErrors.annualCapex && <p role="alert">{fieldErrors.annualCapex}</p>}
-                <div className="manual-grid">{Array.from({length:10},(_,i)=>{
-                  const explicit=selected.assumptions.annualCapex?.[i];
-                  const rate=explicit ?? projectedCapexRate(selected.assumptions.capexRate,selected.assumptions.capexNearRate,i+1,selected.assumptions.capexNormalizationYears,selected.assumptions.capexHoldYears,selected.assumptions.capexCurve);
-                  return <label className="manual-field" key={i}>FY{i+1} · {forecastPlan?.rows[i]?.fiscalEnd ?? `year ${i+1}`} · {explicit!=null?"User override":"Historical model"}
-                    <input type="number" step="any" aria-label={`${selected.label} FY${i+1} cash CapEx ratio`} value={Number.isFinite(rate)?Number((rate*100).toFixed(4)):""} onChange={e=>{
-                      if(e.target.value==="") {setCapitalEntryError(`${selected.label} FY${i+1} CapEx ratio is required; the previous forecast is retained.`);return;}
-                      setCapitalEntryError(null);
-                      const next=[...(selected.assumptions.annualCapex ?? Array(10).fill(null))];next[i]=Number(e.target.value)/100;
-                      setScenarioEdits(prev=>({...prev,[active]:{...prev[active],annualCapex:next}}));
-                    }}/>
-                  </label>;
-                })}</div>
-                <button className="text-button" onClick={()=>{setCapitalEntryError(null);setScenarioEdits(prev=>({...prev,[active]:{...prev[active],annualCapex:undefined}}));}}>Restore modeled annual CapEx</button>
-              </details>
-              {capitalRisk && <p role="alert" className="alert">High investment sensitivity: a ±2 percentage-point change in long-term CapEx/revenue moves the selected case value by more than 20%. Review capital efficiency and terminal assumptions; this is not a verified fair value.</p>}
-              <p className="table-note">Investment settings are historical estimates unless marked as overrides. D&A is normalized after a lag; operating margins are quoted at starting D&A intensity, so increased depreciation also reduces EBIT. Cash CapEx does not include noncash lease additions. Unless lease additions are explicitly entered, they remain unavailable and this is a cash-CapEx-scope forecast. Enter current lease obligations in total debt only once. Long-term capital intensity is uncertain and can materially change intrinsic value.</p>
-              <button
-                className="reset-all"
-                onClick={() => {
-                  setCapitalEntryError(null);
-                  setAnnualEntryError(null);
-                  setScenarioEdits({});
-                  setAnnualEdits({});
-                  setSlowdown(0);
-                  setPeriod("all");
-                }}
-              >
-                {demo
-                  ? "Reset all scenarios to defaults"
-                  : "Reset scenarios to automatic baseline"}
-              </button>
-            </section>
-            <div className="model-results">
+</section>
               <section className="panel simulator">
                 <div className="panel-heading">
                   <div>
@@ -847,7 +617,7 @@ export default function Dashboard({
                     growthSources={forecastPlan?.rows.map((r,i)=> {
                       const defaultsGrowth=defaults.find(s=>s.id===active)?.assumptions.annualGrowth ?? stageGrowths(defaults.find(s=>s.id===active)!.assumptions);
                       const edited=(selected.assumptions.annualGrowth?.[i]??defaultsGrowth[i])!==defaultsGrowth[i] || result.forecast[i].growth!==(selected.assumptions.annualGrowth?.[i]??stageGrowths(selected.assumptions)[i]);
-                      return edited || forecastPlan.mode==="custom" || r.estimate?.source==="User-provided" ? "manual" : active!=="base" ? "modeled" : r.estimate ? "consensus" : "modeled";
+                      return edited || r.source==="User override" || r.estimate?.source==="User-provided" ? "manual" : active!=="base" ? "modeled" : r.estimate ? "consensus" : "modeled";
                     })}
                   />
                   <section className="panel bridge">
