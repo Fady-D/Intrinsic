@@ -39,6 +39,18 @@ export interface MarketPrice {
   asOf: string;
 }
 export interface FinancialDataset {
+  fiscalForecast?: {
+    anchorEnd: string;
+    valuationEnd: string;
+    yearEnds: string[];
+    elapsedActuals?: {
+      revenue: number;
+      ebit: number;
+      depreciation: number;
+      capex: number;
+      changeInNwc: number;
+    };
+  };
   company: Company;
   incomeStatements: IncomeStatement[];
   cashFlows: CashFlowStatement[];
@@ -47,6 +59,7 @@ export interface FinancialDataset {
   source: DataSourceMetadata;
 }
 export interface Assumptions {
+  annualGrowth?: number[];
   growthEarly: number;
   growthMiddle: number;
   growthLate: number;
@@ -62,6 +75,10 @@ export interface Assumptions {
   shares: number;
 }
 export interface ForecastYear {
+  fiscalEnd?: string;
+  discountPeriod?: number;
+  elapsedFcff?: number;
+  remainingFcff?: number;
   year: number;
   period: number;
   growth: number;

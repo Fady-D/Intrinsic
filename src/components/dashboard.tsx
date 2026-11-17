@@ -22,8 +22,10 @@ import type {
 import { millions, money, percent } from "@/lib/format";
 import AssumptionInput from "./assumption-input";
 import Charts from "./charts";
+import type { RevenuePlan } from "@/lib/estimates/types";
+import { stageGrowths, annualSummary } from "@/lib/estimates/forecast";
 const fields: {
-  key: keyof Assumptions;
+  key: Exclude<keyof Assumptions, "annualGrowth">;
   label: string;
   min: number;
   max: number;
@@ -124,10 +126,14 @@ export default function Dashboard({
   data = illustrativeData,
   defaults = createScenarios(),
   priceLabel = "Illustrative market price",
+  forecastPlan,
+  blockingError,
 }: {
   data?: FinancialDataset;
   defaults?: ValuationScenario[];
   priceLabel?: string;
+  forecastPlan?: RevenuePlan | null;
+  blockingError?: string;
 }) {
   const demo = data.source.kind === "illustrative";
   const [scenarios, setScenarios] = useState(() => structuredClone(defaults)),
@@ -137,15 +143,35 @@ export default function Dashboard({
     [loading, setLoading] = useState(false);
   const [slowdown, setSlowdown] = useState(0),
     [period, setPeriod] = useState<SlowdownPeriod>("all");
-  const selected = scenarios.find((s) => s.id === active)!;
-  const outputs = scenarios.map((s) => ({
+  const [annualEdits, setAnnualEdits] = useState<
+    Record<string, Record<string, number[]>>
+  >({});
+  const revision = forecastPlan?.revision ?? "historical",
+    annualMode = forecastPlan && forecastPlan.mode !== "historical";
+  const effectiveScenarios = scenarios.map((s) => {
+    const annual = annualMode
+      ? (annualEdits[revision]?.[s.id] ??
+        defaults.find((d) => d.id === s.id)?.assumptions.annualGrowth)
+      : undefined;
+    return {
+      ...s,
+      assumptions: {
+        ...s.assumptions,
+        ...(annual ? annualSummary(annual) : {}),
+        annualGrowth: annual,
+      },
+    };
+  });
+  const selected = effectiveScenarios.find((s) => s.id === active)!;
+  const evaluateSelected = (a: Assumptions) =>
+    blockingError ? { result: null, error: blockingError } : evaluate(data, a);
+  const outputs = effectiveScenarios.map((s) => ({
     ...s,
-    ...evaluate(data, s.assumptions),
+    ...evaluateSelected(s.assumptions),
   }));
   const base = outputs.find((s) => s.id === "base")!.result;
-  const original = evaluate(data, selected.assumptions),
-    adjusted = evaluate(
-      data,
+  const original = evaluateSelected(selected.assumptions),
+    adjusted = evaluateSelected(
       applySlowdown(selected.assumptions, slowdown, period),
     );
   const result = adjusted.result,
@@ -165,7 +191,10 @@ export default function Dashboard({
       setLoading(false);
     }
   }
-  function change(key: keyof Assumptions, value: number) {
+  function change(
+    key: Exclude<keyof Assumptions, "annualGrowth">,
+    value: number,
+  ) {
     setScenarios((prev) => updateScenario(prev, active, key, value));
   }
   const chartScenarios = outputs
@@ -361,6 +390,124 @@ export default function Dashboard({
               />
             </div>
           </section>
+          {forecastPlan && (
+            <section className="panel">
+              <div className="panel-heading">
+                <h2>
+                  Active forecast:{" "}
+                  {forecastPlan.mode === "consensus"
+                    ? "Analyst / supplied annual forecasts"
+                    : forecastPlan.mode === "custom"
+                      ? "Custom Forecast"
+                      : "Historical Growth"}
+                </h2>
+                <span>{selected.label} scenario · before slowdown</span>
+              </div>
+              <p className="table-note">
+                {forecastPlan.warnings.join(" ")}{" "}
+                {data.fiscalForecast
+                  ? `Revenue anchored to ${data.fiscalForecast.anchorEnd}; cash-flow valuation at ${data.fiscalForecast.valuationEnd}. Elapsed YTD FCFF uses actual operating components with the modeled tax rate and trade-NWC proxy; only remaining FY1 cash flow is discounted.`
+                  : ""}
+              </p>
+              {blockingError && (
+                <div role="alert" className="alert">
+                  {blockingError}
+                </div>
+              )}
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{forecastPlan.mode==="historical"?"Rolling year end":"Fiscal year end"}</th>
+                      <th>Revenue (USD m)</th>
+                      <th>Growth (%)</th>
+                      <th>Forecast source</th>
+                      <th>Reference range / analysts</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {forecastPlan.rows.map((row, i) => {
+                      const current =
+                          selected.assumptions.annualGrowth ??
+                          stageGrowths(selected.assumptions),
+                        baseline =
+                          defaults.find((s) => s.id === active)?.assumptions
+                            .annualGrowth ??
+                          stageGrowths(
+                            defaults.find((s) => s.id === active)!.assumptions,
+                          );
+                      const edited = current
+                        .slice(0, i + 1)
+                        .some((g, j) => g !== baseline[j]);
+                      const est = row.estimate;
+                      return (
+                        <tr key={i}>
+                          <th>{row.fiscalEnd}</th>
+                          <td>
+                            {original.result
+                              ? millions(original.result.forecast[i].revenue)
+                              : "Unavailable · see baseline above"}
+                          </td>
+                          <td>
+                            {annualMode ? (
+                              <input
+                                aria-label={`${selected.label} FY${i + 1} annual growth`}
+                                className="annual-growth-input"
+                                type="number"
+                                step="any"
+                                value={
+                                  Number.isFinite(current[i])
+                                    ? Number((current[i] * 100).toFixed(5))
+                                    : ""
+                                }
+                                onChange={(e) => {
+                                  const next = [...current];
+                                  next[i] =
+                                    e.target.value === ""
+                                      ? NaN
+                                      : Number(e.target.value) / 100;
+                                  setAnnualEdits((prev) => ({
+                                    ...prev,
+                                    [revision]: {
+                                      ...prev[revision],
+                                      [active]: next,
+                                    },
+                                  }));
+                                }}
+                              />
+                            ) : (
+                              percent(current[i])
+                            )}
+                          </td>
+                          <td>
+                            {edited
+                              ? "Manually overridden (including upstream growth)"
+                              : active !== "base" && annualMode
+                                ? "Scenario model adjustment"
+                                : row.source}
+                            {est && (
+                              <small className="estimate-reference">
+                                {est.source} · retrieved {est.retrievedAt}
+                                {est.note ? ` · ${est.note}` : ""}
+                                {est.ebit !== null
+                                  ? ` · reference EBIT ${millions(est.ebit)}m (unused)`
+                                  : ""}
+                              </small>
+                            )}
+                          </td>
+                          <td>
+                            {est
+                              ? `${est.low === null ? "N/A" : millions(est.low)} – ${est.high === null ? "N/A" : millions(est.high)} / ${est.analysts ?? "N/A"}`
+                              : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
           <section id="scenarios">
             <div className="section-heading">
               <h2>Three perspectives. One framework.</h2>
@@ -401,7 +548,11 @@ export default function Dashboard({
                   </span>
                   <dl>
                     <div>
-                      <dt>Growth · 1–3 / 4–5 / 6–10</dt>
+                      <dt>
+                        {annualMode
+                          ? "Mean growth · 1–3 / 4–5 / 6–10"
+                          : "Growth · 1–3 / 4–5 / 6–10"}
+                      </dt>
                       <dd>
                         {[
                           s.assumptions.growthEarly,
@@ -459,6 +610,15 @@ export default function Dashboard({
                           : s,
                       ),
                     );
+                    setAnnualEdits((prev) => ({
+                      ...prev,
+                      [revision]: {
+                        ...prev[revision],
+                        [active]:
+                          defaults.find((s) => s.id === active)?.assumptions
+                            .annualGrowth ?? stageGrowths(selected.assumptions),
+                      },
+                    }));
                     setSlowdown(0);
                   }}
                 >
@@ -477,25 +637,34 @@ export default function Dashboard({
                   </button>
                 ))}
               </div>
-              {fields.map(({ key, ...field }) => (
-                <AssumptionInput
-                  key={`${active}-${key}`}
-                  {...field}
-                  hint={
-                    !demo &&
-                    selected.assumptions[key] !==
-                      defaults.find((s) => s.id === active)?.assumptions[key]
-                      ? `${field.hint ?? ""} Manual override of automatic baseline.`
-                      : field.hint
-                  }
-                  value={selected.assumptions[key]}
-                  onChange={(v) => change(key, v)}
-                />
-              ))}
+              {fields
+                .filter(
+                  (f) =>
+                    !annualMode ||
+                    !["growthEarly", "growthMiddle", "growthLate"].includes(
+                      f.key,
+                    ),
+                )
+                .map(({ key, ...field }) => (
+                  <AssumptionInput
+                    key={`${active}-${key}`}
+                    {...field}
+                    hint={
+                      !demo &&
+                      selected.assumptions[key] !==
+                        defaults.find((s) => s.id === active)?.assumptions[key]
+                        ? `${field.hint ?? ""} Manual override of automatic baseline.`
+                        : field.hint
+                    }
+                    value={selected.assumptions[key]}
+                    onChange={(v) => change(key, v)}
+                  />
+                ))}
               <button
                 className="reset-all"
                 onClick={() => {
                   setScenarios(structuredClone(defaults));
+                  setAnnualEdits({});
                   setSlowdown(0);
                   setPeriod("all");
                 }}
@@ -699,7 +868,13 @@ export default function Dashboard({
                         ["+ D&A", "depreciation"],
                         ["− Capital expenditures", "capex"],
                         ["− Change in NWC", "changeInNwc"],
-                        ["FCFF", "fcff"],
+                        ["Full-year FCFF", "fcff"],
+                        ...(data.fiscalForecast
+                          ? [
+                              ["Elapsed YTD FCFF deduction", "elapsedFcff"],
+                              ["Remaining FCFF discounted", "remainingFcff"],
+                            ]
+                          : []),
                         ["Discount factor", "discountFactor", "factor"],
                         ["PV of FCFF", "presentValue"],
                       ] as [string, keyof DcfResult["terminalYear"], string?][]
@@ -709,10 +884,10 @@ export default function Dashboard({
                         {[...result.forecast, result.terminalYear].map((r) => (
                           <td key={r.year}>
                             {format === "pct"
-                              ? percent(r[key])
+                              ? percent(r[key] as number)
                               : format === "factor"
-                                ? r[key].toFixed(4)
-                                : millions(r[key])}
+                                ? (r[key] as number).toFixed(4)
+                                : millions(r[key] as number)}
                           </td>
                         ))}
                       </tr>

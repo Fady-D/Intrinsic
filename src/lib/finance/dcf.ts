@@ -74,6 +74,20 @@ export function applySlowdown(
     throw new Error("Growth slowdown must be between 0% and 100%.");
   return {
     ...a,
+    ...(a.annualGrowth
+      ? {
+          annualGrowth: a.annualGrowth.map(
+            (g, i) =>
+              g *
+              (period === "all" ||
+              (period === "early" && i < 3) ||
+              (period === "middle" && i >= 3 && i < 5) ||
+              (period === "late" && i >= 5)
+                ? 1 - reduction
+                : 1),
+          ),
+        }
+      : {}),
     growthEarly:
       a.growthEarly *
       (period === "early" || period === "all" ? 1 - reduction : 1),
@@ -88,7 +102,7 @@ export function applySlowdown(
 export function updateScenario(
   scenarios: ValuationScenario[],
   id: string,
-  key: keyof Assumptions,
+  key: Exclude<keyof Assumptions, "annualGrowth">,
   value: number,
 ): ValuationScenario[] {
   return scenarios.map((s) =>
@@ -96,8 +110,20 @@ export function updateScenario(
   );
 }
 export function validateAssumptions(a: Assumptions): void {
-  if (!Object.values(a).every(Number.isFinite))
+  if (
+    !Object.entries(a)
+      .filter(([key]) => key !== "annualGrowth")
+      .every(([, v]) => Number.isFinite(v))
+  )
     throw new Error("All assumptions must be finite numbers.");
+  if (
+    a.annualGrowth &&
+    (a.annualGrowth.length !== 10 ||
+      a.annualGrowth.some((g) => !Number.isFinite(g) || g <= -1))
+  )
+    throw new Error(
+      "Annual growth requires ten finite rates greater than −100%.",
+    );
   terminalValue(0, a.wacc, a.terminalGrowth);
   perShare(0, a.shares);
   entryPrice(0, a.marginOfSafety);
@@ -119,6 +145,18 @@ export function calculateDcf(
     throw new Error(
       "A positive source revenue and a balance sheet are required.",
     );
+  const fiscal = data.fiscalForecast;
+  if (
+    fiscal &&
+    (fiscal.yearEnds.length !== 10 ||
+      fiscal.yearEnds.some(
+        (end, i) =>
+          !Number.isFinite(Date.parse(end)) ||
+          end <= fiscal.valuationEnd ||
+          (i > 0 && end <= fiscal.yearEnds[i - 1]),
+      ))
+  )
+    throw new Error("Invalid fiscal projection dates.");
   let revenue = latest.revenue;
   const makeYear = (
     period: number,
@@ -132,9 +170,41 @@ export function calculateDcf(
     const depreciation = revenue * a.daRate,
       capex = revenue * a.capexRate,
       changeInNwc = (revenue - previousRevenue) * a.nwcRate;
+    if (
+      period === 1 &&
+      fiscal?.elapsedActuals &&
+      (revenue < fiscal.elapsedActuals.revenue ||
+        depreciation < fiscal.elapsedActuals.depreciation ||
+        capex < fiscal.elapsedActuals.capex)
+    )
+      throw new Error(
+        "Full-fiscal-year revenue, D&A or CapEx is below the amount already reported YTD. Review the revenue profile and reinvestment assumptions.",
+      );
     const cashFlow = fcff(ebit, a.taxRate, depreciation, capex, changeInNwc);
+    const fiscalEnd = fiscal?.yearEnds[period - 1],
+      discountPeriod = fiscal
+        ? (Date.parse(fiscalEnd ?? fiscal.yearEnds[9]) -
+            Date.parse(fiscal.valuationEnd)) /
+            86400000 /
+            365.25 +
+          (period === 11 ? 1 : 0)
+        : period;
+    const elapsedFcff =
+      period === 1 && fiscal?.elapsedActuals
+        ? fcff(
+            fiscal.elapsedActuals.ebit,
+            a.taxRate,
+            fiscal.elapsedActuals.depreciation,
+            fiscal.elapsedActuals.capex,
+            fiscal.elapsedActuals.changeInNwc,
+          )
+        : 0;
+    const remainingFcff = cashFlow - elapsedFcff;
     return {
-      year: latest.year + period,
+      ...(fiscal
+        ? { fiscalEnd, discountPeriod, elapsedFcff, remainingFcff }
+        : {}),
+      year: fiscalEnd ? Number(fiscalEnd.slice(0, 4)) : latest.year + period,
       period,
       growth,
       revenue,
@@ -146,20 +216,21 @@ export function calculateDcf(
       capex,
       changeInNwc,
       fcff: cashFlow,
-      discountFactor: 1 / (1 + a.wacc) ** period,
-      presentValue: discount(cashFlow, a.wacc, period),
+      discountFactor: 1 / (1 + a.wacc) ** discountPeriod,
+      presentValue: discount(remainingFcff, a.wacc, discountPeriod),
     };
   };
   const forecast = Array.from({ length: 10 }, (_, i) =>
     makeYear(
       i + 1,
-      i < 3 ? a.growthEarly : i < 5 ? a.growthMiddle : a.growthLate,
+      a.annualGrowth?.[i] ??
+        (i < 3 ? a.growthEarly : i < 5 ? a.growthMiddle : a.growthLate),
       a.initialMargin + ((a.targetMargin - a.initialMargin) * i) / 9,
     ),
   );
   const terminalYear = makeYear(11, a.terminalGrowth, a.targetMargin);
   const tv = terminalValue(terminalYear.fcff, a.wacc, a.terminalGrowth),
-    pvTerminalValue = discount(tv, a.wacc, 10);
+    pvTerminalValue = discount(tv, a.wacc, forecast[9].discountPeriod ?? 10);
   const pvForecast = forecast.reduce((sum, row) => sum + row.presentValue, 0),
     enterpriseValue = pvForecast + pvTerminalValue;
   const equityValue = enterpriseToEquity(

@@ -10,6 +10,12 @@ import {
 import type { WaccInputs, RiskFreeObservation } from "@/lib/finance/wacc";
 import { millions, percent } from "@/lib/format";
 import Dashboard from "./dashboard";
+import ForecastWorkbench from "./forecast-workbench";
+import {
+  applyFiscalForecast,
+  annualScenarioRates,
+} from "@/lib/estimates/forecast";
+import type { RevenuePlan } from "@/lib/estimates/types";
 const financialFields: [
   keyof Pick<
     ModelInputs,
@@ -64,13 +70,39 @@ export default function AutomaticValuation({
       });
     return () => controller.abort();
   }, []);
-  const b = buildAutomaticBaseline(
+  const [forecastPlan, setForecastPlan] = useState<RevenuePlan | null>(null);
+  const historical = buildAutomaticBaseline(
     data,
     riskFree,
     overrides,
     price,
     verifiedQuotePrice,
   );
+  const forward =
+    forecastPlan && forecastPlan.mode !== "historical" ? forecastPlan : null;
+  const b = forward
+    ? buildAutomaticBaseline(
+        data,
+        riskFree,
+        {
+          ...overrides,
+          assumptions: {
+            ...overrides.assumptions,
+            annualGrowth: forward.growths,
+            growthEarly: forward.growths[0],
+            growthMiddle: forward.growths[3],
+            growthLate: forward.growths[5],
+          },
+        },
+        price,
+        verifiedQuotePrice,
+      )
+    : historical;
+  const fiscal =
+    b.dataset && forecastPlan
+      ? applyFiscalForecast(data, b.dataset, forecastPlan)
+      : null;
+  const scenarioDefaults=b.scenarios.map(s=>{const h=historical.scenarios.find(h=>h.id===s.id)!;return {...s,assumptions:{...s.assumptions,growthEarly:h.assumptions.growthEarly,growthMiddle:h.assumptions.growthMiddle,growthLate:h.assumptions.growthLate,annualGrowth:forward?annualScenarioRates(forward.growths,s):undefined}};});
   function financial(key: keyof ModelInputs, value: number | null) {
     setOverrides((prev) => ({
       ...prev,
@@ -110,12 +142,18 @@ export default function AutomaticValuation({
   return (
     <>
       <div className="research-container with-model">
+        <ForecastWorkbench
+          data={data}
+          historical={historical.assumptions}
+          onChange={setForecastPlan}
+        />
         <section className="panel">
           <div className="panel-heading">
             <div>
               <div className="eyebrow">AUTOMATIC FUNDAMENTAL BASELINE</div>
               <h2>
-                {b.status} valuation · {data.ticker}
+                {fiscal?.error ? "Incomplete" : b.status} valuation ·{" "}
+                {data.ticker}
               </h2>
             </div>
             <button
@@ -278,7 +316,7 @@ export default function AutomaticValuation({
                   "nwcRate",
                   "terminalGrowth",
                   "marginOfSafety",
-                ] as (keyof Assumptions)[]
+                ] as Exclude<keyof Assumptions, "annualGrowth">[]
               ).map((key) =>
                 input(
                   `${({ growthEarly: "Revenue growth · years 1–3", growthMiddle: "Revenue growth · years 4–5", growthLate: "Revenue growth · years 6–10", initialMargin: "Year 1 operating margin", targetMargin: "Target operating margin", taxRate: "Cash tax rate", capexRate: "CapEx / revenue", nwcRate: "NWC / incremental revenue", terminalGrowth: "Terminal growth", marginOfSafety: "Margin of safety" } as Partial<Record<keyof Assumptions, string>>)[key]} (%) · manual override`,
@@ -297,18 +335,22 @@ export default function AutomaticValuation({
           </details>
         </section>
       </div>
-      {b.dataset && (
+      {(b.dataset ?? historical.dataset) && (
         <Dashboard
           key={`${data.ticker}-${JSON.stringify(overrides)}-${riskFree?.rate ?? "no-rate"}-${verifiedQuotePrice ?? "book"}`}
           data={{
-            ...b.dataset,
+            ...(fiscal?.dataset ?? b.dataset ?? historical.dataset!),
             market: {
-              ...b.dataset.market,
+              ...(b.dataset ?? historical.dataset)!.market,
               price: price ?? 0,
               asOf: priceLabel,
             },
           }}
-          defaults={b.scenarios}
+          defaults={scenarioDefaults}
+          forecastPlan={forecastPlan}
+          blockingError={
+            fiscal?.error ?? (!b.dataset ? b.issues.join(" ") : undefined)
+          }
           priceLabel={priceLabel}
         />
       )}

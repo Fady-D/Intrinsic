@@ -1444,3 +1444,5 @@ footer {
   text-align: left;
   color: var(--muted);
 }
+
+.annual-growth-input{width:90px;background:#101920;border:1px solid #40534b;color:var(--text);padding:6px;border-radius:4px;text-align:right}.estimate-reference{display:block;max-width:260px;white-space:normal;font-size:9px;color:var(--muted);margin-top:6px}
