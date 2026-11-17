@@ -97,7 +97,7 @@ export function initializationIssues(
     );
   for (const key of ["revenue", "operatingIncome", "capex"] as const)
     if (p?.metrics[key].value == null && !(inputs.automatic && key === "capex"))
-      issues.push(`Missing reliable ${key} for the model's reporting period.`);
+      issues.push(`Missing reliable ${key === "operatingIncome" ? "operating income" : key === "capex" ? "capital expenditure" : "revenue"} for the model's reporting period.`);
   if (data.interim && !data.ttm)
     issues.push(
       "TTM is incomplete. Resolve the unmatched interim data before valuation.",

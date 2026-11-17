@@ -15,10 +15,9 @@ export interface WaccResult {
   rate: number;
 }
 export function calculateWacc(a: WaccInputs): WaccResult {
-  if (Object.values(a).some((v) => v === null || !Number.isFinite(v)))
-    throw new Error(
-      "WACC requires risk-free rate, beta, ERP, debt cost, capital weights and tax rate, or a direct WACC override.",
-    );
+  const labels: Record<keyof WaccInputs,string> = {riskFree:"risk-free rate",beta:"beta",equityRiskPremium:"equity risk premium",costOfDebt:"borrowing cost",equityCapital:"positive equity capital",debt:"total financial debt",taxRate:"tax shield rate"};
+  const missing=(Object.keys(labels) as (keyof WaccInputs)[]).filter(k=>a[k]===null || !Number.isFinite(a[k]));
+  if(missing.length) throw new Error(`WACC needs ${missing.map(k=>labels[k]).join(", ")}. Complete those fields or enter a reviewed direct WACC.`);
   const {
     riskFree: rf,
     beta: b,
@@ -28,10 +27,11 @@ export function calculateWacc(a: WaccInputs): WaccResult {
     debt: d,
     taxRate: t,
   } = a as Record<keyof WaccInputs, number>;
-  if (rf < 0 || b < 0 || erp < 0 || kd < 0 || e <= 0 || d < 0 || t < 0 || t > 1)
-    throw new Error(
-      "Invalid WACC components: equity must be positive, rates/beta/debt nonnegative, and tax between 0% and 100%.",
-    );
+  for(const key of Object.keys(labels) as (keyof WaccInputs)[]) {
+    const v=a[key]!;
+    if((key === "equityCapital" && v<=0) || (key === "taxRate" && (v<0 || v>1)) || (key !== "equityCapital" && key !== "taxRate" && v<0))
+      throw new Error(`WACC ${labels[key]} ${key==="equityCapital"?"must be positive":key==="taxRate"?"must be between 0% and 100%":"must be nonnegative"}.`);
+  }
   const costOfEquity = rf + b * erp,
     equityWeight = e / (e + d),
     debtWeight = d / (e + d),

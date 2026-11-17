@@ -1,3 +1,4 @@
+import { assumptionErrors } from "./validation";
 import { projectedCapexRate } from "./capex";
 import type {
   Assumptions,
@@ -111,31 +112,9 @@ export function updateScenario(
   );
 }
 export function validateAssumptions(a: Assumptions): void {
-  if (
-    !Object.entries(a)
-      .filter(([key]) => key !== "annualGrowth")
-      .every(([, v]) => Number.isFinite(v))
-  )
-    throw new Error("All assumptions must be finite numbers.");
-  if (
-    a.annualGrowth &&
-    (a.annualGrowth.length !== 10 ||
-      a.annualGrowth.some((g) => !Number.isFinite(g) || g <= -1))
-  )
-    throw new Error(
-      "Annual growth requires ten finite rates greater than −100%.",
-    );
-  if(a.capexNearRate !== undefined && (a.capexNearRate<0 || a.capexNearRate>1))
-    throw new Error("Near-term CapEx ratio must be between 0% and 100%.");
-  terminalValue(0, a.wacc, a.terminalGrowth);
-  perShare(0, a.shares);
-  entryPrice(0, a.marginOfSafety);
-  if ([a.growthEarly, a.growthMiddle, a.growthLate].some((g) => g <= -1))
-    throw new Error("Revenue growth must exceed −100%.");
-  if ([a.taxRate, a.daRate, a.capexRate, a.nwcRate].some((r) => r < 0 || r > 1))
-    throw new Error("Tax and investment ratios must be between 0% and 100%.");
-  if ([a.initialMargin, a.targetMargin].some((m) => m < -1 || m > 1))
-    throw new Error("Operating margins must be between −100% and 100%.");
+  const errors=assumptionErrors(a);
+  if(Object.keys(errors).length) throw new Error(Object.values(errors).join(" "));
+
 }
 export function calculateDcf(
   data: FinancialDataset,
@@ -148,7 +127,12 @@ export function calculateDcf(
     throw new Error(
       "A positive source revenue and a balance sheet are required.",
     );
+  for(const [key,label] of [["excessCash","Excess cash"],["debt","Financial debt"],["otherClaims","Non-equity claims"]] as const)
+    if(!Number.isFinite(balance[key]) || balance[key]<0) throw new Error(`${label} is unavailable or invalid; enter a reviewed nonnegative value.`);
   const fiscal = data.fiscalForecast;
+  if(fiscal?.elapsedActuals) for(const [key,v] of Object.entries(fiscal.elapsedActuals))
+    if(!Number.isFinite(v) || (["revenue","depreciation","capex"].includes(key) && v<0))
+      throw new Error(`Reported YTD ${key} is invalid; review the fiscal-year reconciliation.`);
   if (
     fiscal &&
     (fiscal.yearEnds.length !== 10 ||

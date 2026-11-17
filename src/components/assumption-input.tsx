@@ -2,13 +2,14 @@
 import { useState } from "react";
 interface Props {
   label: string;
-  value: number;
+  value: number | null;
   onChange: (value: number) => void;
   min: number;
   max: number;
   step?: number;
   unit?: "%" | "m";
   hint?: string;
+  error?: string;
 }
 export default function AssumptionInput({
   label,
@@ -19,11 +20,12 @@ export default function AssumptionInput({
   step = 0.5,
   unit = "%",
   hint,
+  error,
 }: Props) {
   const scale = unit === "%" ? 100 : 1;
-  const display = Number((value * scale).toFixed(4));
-  const sliderMin = Math.min(min, display),
-    sliderMax = Math.max(max, display);
+  const display = value!==null && Number.isFinite(value) ? Number((value * scale).toFixed(4)) : null;
+  const sliderMin = Math.min(min, display ?? min),
+    sliderMax = Math.max(max, display ?? max);
   const [draft, setDraft] = useState<string | null>(null);
   return (
     <label className="assumption">
@@ -36,7 +38,8 @@ export default function AssumptionInput({
             min={sliderMin}
             max={sliderMax}
             step={step}
-            value={draft ?? display}
+            value={draft ?? display ?? ""}
+            aria-invalid={!!error}
             onChange={(e) => {
               const raw = e.target.value;
               setDraft(raw);
@@ -54,12 +57,14 @@ export default function AssumptionInput({
         min={sliderMin}
         max={sliderMax}
         step={step}
-        value={display}
+        value={display ?? min}
+        disabled={display===null}
         onChange={(e) => {
           setDraft(null);
           onChange(Number(e.target.value) / scale);
         }}
       />
+      {error && <small role="alert">{error}</small>}
       {hint && <small>{hint}</small>}
     </label>
   );

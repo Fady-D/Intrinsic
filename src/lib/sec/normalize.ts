@@ -441,15 +441,12 @@ function debt(ctx: Context, end: string): Metric {
           "Long-term debt/finance leases plus separately reported short-term borrowing.",
         );
   }
-  const pair = (current: string, noncurrent: string) =>
-    derived(
-      [
-        getTag(ctx, current, undefined, end, "USD"),
-        getTag(ctx, noncurrent, undefined, end, "USD"),
-      ],
-      (v) => v[0] + v[1],
-      "Current plus noncurrent long-term debt.",
-    );
+  const pair = (current: string, noncurrent: string) => {
+    const c=getTag(ctx,current,undefined,end,"USD"), n=getTag(ctx,noncurrent,undefined,end,"USD");
+    return c.sources[0]?.accession !== n.sources[0]?.accession
+      ? missing("Current and noncurrent debt disclosures do not share a filing.")
+      : derived([c,n],v=>v[0]+v[1],"Current plus noncurrent long-term debt.");
+  };
   const long = pair("LongTermDebtCurrent", "LongTermDebtNoncurrent");
   if (long.value === null)
     return missing(

@@ -22,6 +22,7 @@ import { millions, money, percent } from "@/lib/format";
 import AssumptionInput from "./assumption-input";
 import Charts from "./charts";
 import type { RevenuePlan } from "@/lib/estimates/types";
+import { assumptionErrors } from "@/lib/finance/validation";
 import { stageGrowths, annualSummary } from "@/lib/estimates/forecast";
 const fields: {
   key: Exclude<keyof Assumptions, "annualGrowth">;
@@ -96,6 +97,8 @@ function evaluate(
   result: DcfResult | null;
   error: string | null;
 } {
+  const invalid=Object.values(assumptionErrors(a));
+  if(invalid.length) return {result:null,error:invalid.join(" ")};
   try {
     return { result: calculateDcf(data, a), error: null };
   } catch (e) {
@@ -144,6 +147,7 @@ export default function Dashboard({
   const [ticker, setTicker] = useState("ASTR"),
     [tickerError, setTickerError] = useState(""),
     [loading, setLoading] = useState(false);
+  const [annualEntryError,setAnnualEntryError] = useState<string | null>(null);
   const [slowdown, setSlowdown] = useState(0),
     [period, setPeriod] = useState<SlowdownPeriod>("all");
   const [annualEdits, setAnnualEdits] = useState<
@@ -166,6 +170,7 @@ export default function Dashboard({
     };
   });
   const selected = effectiveScenarios.find((s) => s.id === active)!;
+  const fieldErrors = assumptionErrors(selected.assumptions);
   const evaluateSelected = (a: Assumptions) =>
     blockingError ? { result: null, error: blockingError } : evaluate(data, a);
   const outputs = effectiveScenarios.map((s) => ({
@@ -349,7 +354,7 @@ export default function Dashboard({
                   key={s.id}
                   label={`${s.label} intrinsic value`}
                   value={
-                    s.result ? money(s.result.valuePerShare) : "Invalid inputs"
+                    s.result ? money(s.result.valuePerShare) : `${s.label}: ${s.error ?? "Required data unavailable."}`
                   }
                   note={
                     s.id === "base"
@@ -394,6 +399,13 @@ export default function Dashboard({
                 note={`Discount to estimated fair value: ${percent(base?.discountToFairValue ?? null)}`}
               />
             </div>
+          </section>
+          <section className="panel" aria-label="Valuation readiness">
+            <h3>{blockingError ? "Missing required inputs" : (Object.keys(fieldErrors).length || annualEntryError) ? "Invalid user assumptions" : original.error ? "Financial statement consistency requires review" : demo ? "Ready to calculate" : "Provisional — estimated assumptions"} · {selected.label}</h3>
+            {annualEntryError && <p role="alert">{annualEntryError} The last valid calculation is retained.</p>}
+            {original.error && <p role="alert">{selected.label}: {original.error}</p>}
+            {fieldErrors.annualGrowth && <p role="alert">{fieldErrors.annualGrowth} Correct the corresponding annual growth input below.</p>}
+            <p>Each scenario is calculated independently. Invalid edits are retained for correction; no earlier valuation is substituted for them.</p>
           </section>
           {forecastPlan && (
             <section className="panel">
@@ -471,6 +483,7 @@ export default function Dashboard({
                             {annualMode ? (
                               <input
                                 aria-label={`${selected.label} FY${i + 1} annual growth`}
+                                aria-invalid={!!fieldErrors.annualGrowth}
                                 className="annual-growth-input"
                                 type="number"
                                 step="any"
@@ -480,11 +493,10 @@ export default function Dashboard({
                                     : ""
                                 }
                                 onChange={(e) => {
+                                  if(e.target.value === "") { setAnnualEntryError(`${selected.label} FY${i+1} requires a growth rate.`); return; }
+                                  setAnnualEntryError(null);
                                   const next = [...current];
-                                  next[i] =
-                                    e.target.value === ""
-                                      ? NaN
-                                      : Number(e.target.value) / 100;
+                                  next[i] = Number(e.target.value) / 100;
                                   setAnnualEdits((prev) => ({
                                     ...prev,
                                     [revision]: {
@@ -559,7 +571,7 @@ export default function Dashboard({
                   <strong>
                     {s.result
                       ? money(s.result.valuePerShare)
-                      : "Invalid inputs"}
+                      : `${s.label}: ${s.error ?? "Required data unavailable."}`}
                   </strong>
                   <span className="scenario-upside">
                     {s.error ??
@@ -620,6 +632,7 @@ export default function Dashboard({
                 <button
                   className="text-button"
                   onClick={() => {
+                    setAnnualEntryError(null);
                     setScenarioEdits(prev=>({...prev,[active]:{}}));
                     setAnnualEdits((prev) => ({
                       ...prev,
@@ -661,6 +674,7 @@ export default function Dashboard({
                     key={`${active}-${key}`}
                     {...field}
                     label={key === "capexRate" && selected.assumptions.capexNearRate !== undefined ? "Long-term CapEx / revenue" : field.label}
+                    error={fieldErrors[key]}
                     hint={
                       !demo &&
                       selected.assumptions[key] !==
@@ -668,13 +682,14 @@ export default function Dashboard({
                         ? `${field.hint ?? ""} Manual override of automatic baseline.`
                         : field.hint
                     }
-                    value={selected.assumptions[key] ?? selected.assumptions.capexRate}
+                    value={Number.isFinite(selected.assumptions[key]) ? selected.assumptions[key]! : null}
                     onChange={(v) => change(key, v)}
                   />
                 ))}
               <button
                 className="reset-all"
                 onClick={() => {
+                  setAnnualEntryError(null);
                   setScenarioEdits({});
                   setAnnualEdits({});
                   setSlowdown(0);

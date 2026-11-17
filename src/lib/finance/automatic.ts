@@ -1,3 +1,4 @@
+import { assumptionErrors } from "./validation";
 import { capexProfile } from "./capex";
 import type {
   VerifiedFinancials,
@@ -8,6 +9,7 @@ import type { Assumptions, FinancialDataset, ValuationScenario } from "./types";
 import { calculateDcf } from "./dcf";
 import {
   initializeInputs,
+  initializationIssues,
   toDcfDataset,
   type ModelInputs,
 } from "../data/research";
@@ -32,6 +34,7 @@ export interface AutomaticBaseline {
   waccInputs: WaccInputs;
   waccResult: WaccResult | null;
   issues: string[];
+  scenarioIssues: Record<string,string>;
   warnings: string[];
   evidence: {
     label: string;
@@ -188,7 +191,8 @@ export function buildAutomaticBaseline(
     daPeriod = data.ttm?.metrics.depreciation.value != null ? data.ttm : data.interim,
     da = historicalDa ?? (daPeriod ? ratio(daPeriod, "depreciation") : null),
     profile = capexProfile(data),
-    capex = profile?.normal ?? median(values("capex"));
+    annualCapex = median(values("capex")),
+    capex = profile?.normal ?? annualCapex ?? (p ? ratio(p,"capex") : null) ?? (data.interim ? ratio(data.interim,"capex") : null);
   const taxSamples = recent.flatMap((a) => {
     const tax = metric(a, "taxExpense"),
       pretax = metric(a, "pretaxIncome");
@@ -238,13 +242,22 @@ export function buildAutomaticBaseline(
       ? [(x - y) / (r - prev)]
       : [];
   });
-  const observedNwc = median(nwcSamples.slice(-3)),
+  const balanceNwc = annual.slice(-3).flatMap(a=>{
+    const ar=metric(a,"receivables"), inv=metric(a,"inventory"), ap=metric(a,"payables"), r=metric(a,"revenue");
+    if(ar===null || inv===null || ap===null || r===null || r<=0) return [];
+    const ratio=(ar+inv-ap)/r;
+    return ratio>=0 && ratio<=.5 ? [ratio] : [];
+  });
+  const flowNwc = median(nwcSamples.slice(-3)),
+    observedNwc = flowNwc ?? (balanceNwc.length>=2 ? median(balanceNwc) : null),
     nwcRate = observedNwc === null ? NaN : clamp(observedNwc, 0, 0.5);
   note(
     "Trade working-capital investment",
     Number.isFinite(nwcRate) ? nwcRate : null,
     "estimated",
-    "Median change in receivables + inventory − trade payables divided by comparable revenue growth; bounded to 0–50% to avoid assuming future working-capital cash releases. Excludes other operating assets/liabilities.",
+    flowNwc === null && observedNwc !== null
+      ? "Estimated incremental working-capital intensity from at least two complete nonnegative historical trade-NWC/revenue balances (0–50%). Assumes trade working capital scales with sales; not a reported incremental investment ratio."
+      : "Median change in receivables + inventory − trade payables divided by comparable revenue growth; bounded to 0–50% to avoid assuming future working-capital cash releases. Excludes other operating assets/liabilities.",
   );
   if (observedNwc === null)
     issues.push(
@@ -430,8 +443,8 @@ export function buildAutomaticBaseline(
         growthEarly: assumptions.growthEarly - growthSpread,
         growthMiddle: assumptions.growthMiddle - growthSpread * 0.6,
         growthLate: assumptions.growthLate - growthSpread * 0.25,
-        targetMargin: assumptions.targetMargin - marginSpread,
-        capexRate: assumptions.capexRate + 0.01,
+        targetMargin: assumptions.targetMargin - Math.min(marginSpread, Math.max(0, assumptions.targetMargin+1)),
+        capexRate: assumptions.capexRate + Math.min(.01, Math.max(0,1-assumptions.capexRate)),
         wacc: assumptions.wacc + 0.015,
       },
     },
@@ -444,8 +457,8 @@ export function buildAutomaticBaseline(
         growthEarly: Math.min(0.25, assumptions.growthEarly + growthSpread),
         growthMiddle: assumptions.growthMiddle + growthSpread * 0.6,
         growthLate: assumptions.growthLate + growthSpread * 0.25,
-        targetMargin: assumptions.targetMargin + marginSpread,
-        capexRate: assumptions.capexRate * (1 + growthSpread),
+        targetMargin: assumptions.targetMargin + Math.min(marginSpread, Math.max(0,1-assumptions.targetMargin)),
+        capexRate: assumptions.capexRate + Math.min(assumptions.capexRate*growthSpread, Math.max(0,1-assumptions.capexRate)),
         wacc: Math.max(
           assumptions.terminalGrowth + 0.015,
           assumptions.wacc - 0.005,
@@ -454,36 +467,17 @@ export function buildAutomaticBaseline(
     },
   ];
   const dataset = toDcfDataset(data, inputs, price);
-  if (!dataset) {
-    if (inputs.debt === null)
-      issues.push(
-        "Enter total financial debt: complete current and noncurrent borrowing coverage was not available.",
-      );
-    if (inputs.otherClaims === null)
-      issues.push(
-        "Enter other non-equity claims: preferred and total minority interests cannot be established. Enter zero only after review.",
-      );
-    if (inputs.excessCash === null)
-      issues.push("Cash coverage is incomplete; enter estimated excess cash.");
-    if (inputs.shares === null)
-      issues.push("A diluted share estimate is required.");
-    if (inputs.depreciationRate === null)
-      issues.push(
-        "D&A coverage is incomplete; enter a modeled D&A / revenue ratio.",
-      );
-    if (!issues.length)
-      issues.push(
-        "Underlying statement periods or eligibility are incomplete; review source warnings.",
-      );
+  if(!dataset) {
+    const missing=initializationIssues(data,inputs);
+    issues.push(...missing);
+    if(!missing.length && !issues.length) issues.push("Underlying statement periods or eligibility require review.");
   }
-  if (dataset && !issues.length) {
-    try {
-      for (const s of scenarios) calculateDcf(dataset, s.assumptions);
-    } catch (e) {
-      issues.push(
-        e instanceof Error ? e.message : "Invalid automatic assumptions.",
-      );
-    }
+  const scenarioIssues: Record<string,string> = {};
+  if(dataset) for(const scenario of scenarios) {
+    const invalid=Object.values(assumptionErrors(scenario.assumptions));
+    if(invalid.length) { scenarioIssues[scenario.id]=invalid.join(" "); continue; }
+    try { calculateDcf(dataset,scenario.assumptions); }
+    catch(e) { scenarioIssues[scenario.id]=e instanceof Error?e.message:"Calculation could not complete."; }
   }
   note(
     "Normalized operating margin",
@@ -495,7 +489,7 @@ export function buildAutomaticBaseline(
     "Capital expenditure intensity",
     assumptions.capexRate,
     "estimated",
-    profile?.reason ?? "Three-year median CapEx/revenue with a floor at modeled D&A intensity; insufficient comparable disclosures for a separate near-term normalization profile.",
+    profile?.reason ?? (annualCapex === null ? "CapEx intensity uses a complete current performance or interim CapEx/revenue ratio because annual history is unavailable. This is a forecast proxy, subject to interim seasonality, with a floor at modeled D&A." : "Three-year median CapEx/revenue with a floor at modeled D&A intensity; insufficient comparable disclosures for a separate near-term normalization profile."),
   );
   warnings.push(
     "Debt/claim adjustments and shares must use the same conversion basis; review convertible debt before treating a weighted-average diluted-share proxy as current dilution. SBC remains an operating expense: it is not added back to FCFF, and a second dilution/SBC deduction is not imposed. Share count stays constant after the disclosed starting proxy.",
@@ -506,11 +500,12 @@ export function buildAutomaticBaseline(
     Object.keys(overrides.financial ?? {}).length > 0 ||
     overrides.directWacc != null;
   return {
-    status: issues.length
+    status: issues.length || Object.keys(scenarioIssues).length
       ? "Incomplete"
       : materialEstimate
         ? "Provisional"
         : "Estimated",
+    scenarioIssues,
     inputs,
     assumptions,
     scenarios,

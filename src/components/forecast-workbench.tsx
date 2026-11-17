@@ -186,6 +186,7 @@ export default function ForecastWorkbench({
         . {preview.warnings.join(" ")}
       </p>
       {preview.explanation && <p className="table-note">{preview.explanation}</p>}
+      {error && <p role="alert">{error}</p>}
       <div className="table-scroll">
         <table>
           <thead>
@@ -227,9 +228,10 @@ export default function ForecastWorkbench({
                 step="any"
                 value={Number.isFinite(g) ? Number((g * 100).toFixed(5)) : ""}
                 onChange={(e) => {
+                  if(e.target.value === "") { setError(`Custom FY${i+1} requires a growth rate; the last valid forecast is retained.`); return; }
+                  setError("");
                   const next = [...(custom ?? stageGrowths(historical))];
-                  next[i] =
-                    e.target.value === "" ? NaN : Number(e.target.value) / 100;
+                  next[i] = Number(e.target.value) / 100;
                   setCustom(next);
                 }}
               />

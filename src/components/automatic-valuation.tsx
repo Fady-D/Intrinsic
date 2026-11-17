@@ -137,6 +137,7 @@ export default function AutomaticValuation({
           change(e.target.value === "" ? null : Number(e.target.value) / scale)
         }
       />
+      {(value === null || !Number.isFinite(value)) && !label.startsWith("Direct WACC") && <small role="alert">{label.replace(" · manual override","")} is unavailable or invalid. Enter a reviewed value.</small>}
     </label>
   );
   return (
@@ -152,7 +153,7 @@ export default function AutomaticValuation({
             <div>
               <div className="eyebrow">AUTOMATIC FUNDAMENTAL BASELINE</div>
               <h2>
-                {fiscal?.error ? "Incomplete" : b.status} valuation ·{" "}
+                {fiscal?.error ? "Missing required inputs" : b.status === "Incomplete" ? "Missing required inputs / review needed" : "Provisional — estimated assumptions"} valuation ·{" "}
                 {data.ticker}
               </h2>
             </div>
@@ -163,6 +164,9 @@ export default function AutomaticValuation({
             >
               Reset automatic baseline ↺
             </button>
+          </div>
+          <div role="status" aria-label="Valuation readiness">
+            {fiscal?.error ? `Financial-data limitation: ${fiscal.error}` : b.issues.length ? "Missing required inputs — complete the fields below." : Object.keys(b.scenarioIssues).length ? "Assumptions need review — scenario-specific errors appear beside the model inputs." : "Provisional — estimated assumptions; ready to calculate."}
           </div>
           <p className="table-note">
             Historical growth, normalized margins, tax and reinvestment
@@ -181,6 +185,10 @@ export default function AutomaticValuation({
               </ul>
             </div>
           )}
+          {b.inputs.otherClaims === null && <div className="alert">
+            <p>Preferred and minority claims are unresolved. Enter a reviewed total below, or confirm that you reviewed the company’s disclosures and found no material non-equity claim.</p>
+            <button type="button" className="text-button" onClick={()=>financial("otherClaims",0)}>I reviewed claims — use zero</button>
+          </div>}
           <div className="manual-grid">
             {financialFields.map(([key, label, scale]) =>
               input(
@@ -320,7 +328,7 @@ export default function AutomaticValuation({
               ).map((key) =>
                 input(
                   `${({ growthEarly: "Revenue growth · years 1–3", growthMiddle: "Revenue growth · years 4–5", growthLate: "Revenue growth · years 6–10", initialMargin: "Year 1 operating margin", targetMargin: "Target operating margin", taxRate: "Cash tax rate", capexRate: "CapEx / revenue", nwcRate: "NWC / incremental revenue", terminalGrowth: "Terminal growth", marginOfSafety: "Margin of safety" } as Partial<Record<keyof Assumptions, string>>)[key]} (%) · manual override`,
-                  b.assumptions[key] ?? null,
+                  Number.isFinite(b.assumptions[key]) ? b.assumptions[key]! : null,
                   100,
                   (v) =>
                     setOverrides((prev) => {
