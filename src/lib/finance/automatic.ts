@@ -1,3 +1,4 @@
+import { capexProfile } from "./capex";
 import type {
   VerifiedFinancials,
   MetricKey,
@@ -186,7 +187,8 @@ export function buildAutomaticBaseline(
   const historicalDa = median(values("depreciation")),
     daPeriod = data.ttm?.metrics.depreciation.value != null ? data.ttm : data.interim,
     da = historicalDa ?? (daPeriod ? ratio(daPeriod, "depreciation") : null),
-    capex = median(values("capex"));
+    profile = capexProfile(data),
+    capex = profile?.normal ?? median(values("capex"));
   const taxSamples = recent.flatMap((a) => {
     const tax = metric(a, "taxExpense"),
       pretax = metric(a, "pretaxIncome");
@@ -390,6 +392,7 @@ export function buildAutomaticBaseline(
     targetMargin: target,
     taxRate,
     daRate: inputs.depreciationRate ?? NaN,
+    ...(profile ? { capexNearRate: profile.near } : {}),
     capexRate:
       capex === null ? NaN : Math.max(capex, inputs.depreciationRate ?? 0),
     nwcRate,
@@ -492,11 +495,12 @@ export function buildAutomaticBaseline(
     "Capital expenditure intensity",
     assumptions.capexRate,
     "estimated",
-    "Three-year median CapEx/revenue with a floor at modeled D&A intensity; bull growth includes higher reinvestment.",
+    profile?.reason ?? "Three-year median CapEx/revenue with a floor at modeled D&A intensity; insufficient comparable disclosures for a separate near-term normalization profile.",
   );
   warnings.push(
     "Debt/claim adjustments and shares must use the same conversion basis; review convertible debt before treating a weighted-average diluted-share proxy as current dilution. SBC remains an operating expense: it is not added back to FCFF, and a second dilution/SBC deduction is not imposed. Share count stays constant after the disclosed starting proxy.",
   );
+  warnings.push(profile?.reason ?? "Separate near-term CapEx normalization unavailable; existing flat investment method retained. Review current spending before using annual forecasts.");
   const materialEstimate =
     warnings.length > 0 ||
     Object.keys(overrides.financial ?? {}).length > 0 ||

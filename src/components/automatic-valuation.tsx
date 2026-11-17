@@ -320,7 +320,7 @@ export default function AutomaticValuation({
               ).map((key) =>
                 input(
                   `${({ growthEarly: "Revenue growth · years 1–3", growthMiddle: "Revenue growth · years 4–5", growthLate: "Revenue growth · years 6–10", initialMargin: "Year 1 operating margin", targetMargin: "Target operating margin", taxRate: "Cash tax rate", capexRate: "CapEx / revenue", nwcRate: "NWC / incremental revenue", terminalGrowth: "Terminal growth", marginOfSafety: "Margin of safety" } as Partial<Record<keyof Assumptions, string>>)[key]} (%) · manual override`,
-                  b.assumptions[key],
+                  b.assumptions[key] ?? null,
                   100,
                   (v) =>
                     setOverrides((prev) => {

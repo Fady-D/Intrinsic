@@ -1,0 +1,41 @@
+import { expect, it } from "vitest";
+import { capexProfile, projectedCapexRate } from "./capex";
+import { calculateDcf, fcff } from "./dcf";
+import { defaultAssumptions, illustrativeData } from "../data/illustrative";
+import { normalizeFinancials } from "../sec/normalize";
+import { fixture } from "../sec/fixtures/company";
+it("uses the arithmetic average of three complete annual ratios and latest interim intensity, retaining missing-data fallback",()=>{
+  const {facts,sub}=fixture(), d=normalizeFinancials(facts,sub,"TEST","2025-11-15T00:00:00Z");
+  const extra=structuredClone(d.annual[0]); extra.start="2022-07-01";extra.end="2023-06-30";
+  d.annual.unshift(extra);
+  d.annual.forEach((p,i)=>{p.metrics.revenue.value=1000*(i+1);p.metrics.capex.value=p.metrics.revenue.value*(i+1)*.1;});
+  d.interim!.metrics.revenue.value=300;d.interim!.metrics.capex.value=120;
+  expect(capexProfile(d)?.normal).toBeCloseTo(.2);
+  expect(capexProfile(d)?.near).toBeCloseTo(.4);
+  expect(capexProfile(d)?.reason).toContain("years 1–2");
+  d.annual[0].metrics.capex.value=null;
+  expect(capexProfile(d)).toBeNull();
+});
+it("holds near-term spending for two years, fades to the long-term rate by year six and uses that rate in terminal FCFF",()=>{
+  const a={...defaultAssumptions,capexNearRate:.37,capexRate:.16};
+  const r=calculateDcf(illustrativeData,a);
+  expect(r.forecast[0].capex/r.forecast[0].revenue).toBeCloseTo(.37);
+  expect(r.forecast[1].capex/r.forecast[1].revenue).toBeCloseTo(.37);
+  expect(projectedCapexRate(.16,.37,3)).toBeCloseTo(.3175);
+  expect(r.forecast[5].capex/r.forecast[5].revenue).toBeCloseTo(.16);
+  expect(r.terminalYear.capex/r.terminalYear.revenue).toBeCloseTo(.16);
+  expect(r.terminalYear.fcff).toBeCloseTo(fcff(r.terminalYear.ebit,a.taxRate,r.terminalYear.depreciation,r.terminalYear.revenue*.16,r.terminalYear.changeInNwc));
+  expect(r.entryPrice).toBeCloseTo(r.valuePerShare*(1-a.marginOfSafety));
+  expect(()=>calculateDcf(illustrativeData,{...a,capexNearRate:1.2})).toThrow(/Near-term/);
+});
+it("floors profiled FY1 spending at reported YTD while preserving legacy validation, elapsed-FCFF reconciliation and the capital-efficiency floor",()=>{
+  const data={...illustrativeData,fiscalForecast:{anchorEnd:"2025-12-31",valuationEnd:"2026-09-30",yearEnds:Array.from({length:10},(_,i)=>`${2026+i}-12-31`),elapsedActuals:{revenue:300,ebit:60,depreciation:10,capex:200,changeInNwc:0}}};
+  const a={...defaultAssumptions,annualGrowth:Array(10).fill(0),capexNearRate:.01,capexRate:.16};
+  const r=calculateDcf(data,a);
+  expect(r.forecast[0].capex).toBe(200);
+  expect(r.forecast[0].remainingFcff).toBeCloseTo(r.forecast[0].fcff-fcff(60,a.taxRate,10,200,0));
+  const legacy={...defaultAssumptions,capexRate:.16};
+  expect(()=>calculateDcf(data,legacy)).toThrow(/already reported YTD/);
+  const growth=calculateDcf({...illustrativeData,salesToCapital:2},{...a,annualGrowth:Array(10).fill(.2),nwcRate:0});
+  expect(growth.forecast[0].capex-growth.forecast[0].depreciation).toBeCloseTo((growth.forecast[0].revenue-1000)/2);
+});

@@ -1,3 +1,4 @@
+import { projectedCapexRate } from "./capex";
 import type {
   Assumptions,
   DcfResult,
@@ -124,6 +125,8 @@ export function validateAssumptions(a: Assumptions): void {
     throw new Error(
       "Annual growth requires ten finite rates greater than −100%.",
     );
+  if(a.capexNearRate !== undefined && (a.capexNearRate<0 || a.capexNearRate>1))
+    throw new Error("Near-term CapEx ratio must be between 0% and 100%.");
   terminalValue(0, a.wacc, a.terminalGrowth);
   perShare(0, a.shares);
   entryPrice(0, a.marginOfSafety);
@@ -173,8 +176,12 @@ export function calculateDcf(
       throw new Error("Sales-to-capital must be positive and finite.");
     const required = data.salesToCapital ? Math.max(0, revenue - previousRevenue) / data.salesToCapital : null;
     // A floor on TOTAL reinvestment, not an additional charge on top of CapEx/NWC.
-    const capex = required === null ? revenue * a.capexRate
-      : Math.max(revenue * a.capexRate, depreciation + required - changeInNwc);
+    const plannedCapex = revenue * projectedCapexRate(a.capexRate, a.capexNearRate, period);
+    // An annual forecast cannot spend less than reported YTD. Only the new profile
+    // applies this explicit floor; legacy flat-rate inputs retain their validation.
+    const reportedFloor = a.capexNearRate !== undefined && period === 1 ? fiscal?.elapsedActuals?.capex ?? 0 : 0;
+    const capex = Math.max(plannedCapex, reportedFloor,
+      required === null ? plannedCapex : depreciation + required - changeInNwc);
     if (
       period === 1 &&
       fiscal?.elapsedActuals &&

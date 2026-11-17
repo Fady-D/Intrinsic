@@ -54,7 +54,10 @@ const fields: {
   { key: "targetMargin", label: "Year 10 operating margin", min: -50, max: 60 },
   { key: "taxRate", label: "Cash tax rate", min: 0, max: 50 },
   { key: "daRate", label: "D&A / revenue", min: 0, max: 30 },
-  { key: "capexRate", label: "CapEx / revenue", min: 0, max: 40 },
+  { key: "capexNearRate", label: "Near-term CapEx / revenue · years 1–2", min: 0, max: 60,
+    hint: "Holds for two years, then converges to the long-term ratio by year 6. FY1 is floored at reported YTD spending." },
+  { key: "capexRate", label: "CapEx / revenue", min: 0, max: 60,
+    hint: "With a near-term profile, this is the long-term and terminal ratio. The sales-to-capital floor can require additional investment." },
   {
     key: "nwcRate",
     label: "NWC / incremental revenue",
@@ -648,15 +651,16 @@ export default function Dashboard({
               {fields
                 .filter(
                   (f) =>
-                    !annualMode ||
+                    (f.key !== "capexNearRate" || selected.assumptions.capexNearRate !== undefined) && (!annualMode ||
                     !["growthEarly", "growthMiddle", "growthLate"].includes(
                       f.key,
-                    ),
+                    )),
                 )
                 .map(({ key, ...field }) => (
                   <AssumptionInput
                     key={`${active}-${key}`}
                     {...field}
+                    label={key === "capexRate" && selected.assumptions.capexNearRate !== undefined ? "Long-term CapEx / revenue" : field.label}
                     hint={
                       !demo &&
                       selected.assumptions[key] !==
@@ -664,7 +668,7 @@ export default function Dashboard({
                         ? `${field.hint ?? ""} Manual override of automatic baseline.`
                         : field.hint
                     }
-                    value={selected.assumptions[key]}
+                    value={selected.assumptions[key] ?? selected.assumptions.capexRate}
                     onChange={(v) => change(key, v)}
                   />
                 ))}
@@ -870,6 +874,7 @@ export default function Dashboard({
                     </tr>
                   </thead>
                   <tbody>
+                    <tr><th>Effective CapEx / revenue</th>{[...result.forecast,result.terminalYear].map(r=><td key={r.year}>{percent(r.revenue>0?r.capex/r.revenue:null)}</td>)}</tr>
                     {(
                       [
                         ["Revenue growth", "growth", "pct"],

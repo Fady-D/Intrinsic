@@ -69,6 +69,7 @@ export interface Assumptions {
   taxRate: number;
   daRate: number;
   capexRate: number;
+  capexNearRate?: number;
   nwcRate: number;
   wacc: number;
   terminalGrowth: number;
