@@ -183,7 +183,9 @@ export function buildAutomaticBaseline(
     normalMargin === null
       ? startMargin
       : 0.7 * normalMargin + 0.3 * startMargin;
-  const da = median(values("depreciation")),
+  const historicalDa = median(values("depreciation")),
+    daPeriod = data.ttm?.metrics.depreciation.value != null ? data.ttm : data.interim,
+    da = historicalDa ?? (daPeriod ? ratio(daPeriod, "depreciation") : null),
     capex = median(values("capex"));
   const taxSamples = recent.flatMap((a) => {
     const tax = metric(a, "taxExpense"),
@@ -256,7 +258,17 @@ export function buildAutomaticBaseline(
       balance.periodEndShares.value,
       metric(p, "dilutedShares"),
     ].filter((v): v is number => v !== null && v > 0);
-  const shares = shareFacts.length ? Math.max(...shareFacts) : null;
+  const basis = data.preferredBasis;
+  const shares = basis?.shares.value != null
+    ? Math.max(basis.shares.value, balance.periodEndShares.value ?? 0)
+    : shareFacts.length ? Math.max(...shareFacts) : null;
+  note("D&A / revenue", da, "calculated", historicalDa !== null
+    ? "Median of available annual D&A/revenue ratios over the last three years."
+    : daPeriod ? `Complete ${daPeriod.kind} D&A divided by revenue for ${daPeriod.start} – ${daPeriod.end}; used as a forecast intensity proxy. No missing annual component was invented.`
+    : "Complete comparable D&A disclosures unavailable.");
+  if (historicalDa === null && da !== null)
+    warnings.push("D&A intensity uses the latest complete TTM or interim disclosure because annual D&A coverage is incomplete; interim intensity is not presented as TTM D&A.");
+  if (basis) warnings.push(basis.claim.reason ?? "Preferred liquidation-basis proxy.");
   const excessCash =
     cash !== null && rev !== null
       ? Math.max(0, cash + (investments ?? 0) - 0.05 * rev)
@@ -271,14 +283,15 @@ export function buildAutomaticBaseline(
     "Diluted share proxy (m)",
     shares,
     "estimated",
-    "Maximum of current disclosed common shares and latest annual/TTM diluted weighted-average shares. A conservative proxy, not verified point-in-time fully diluted shares.",
+    basis ? basis.shares.reason ?? "Nonconverted share basis." : "Maximum of current disclosed common shares and latest annual/TTM diluted weighted-average shares. A conservative proxy, not verified point-in-time fully diluted shares.",
   );
-  const pref = balance.preferredClaims?.value ?? null,
+  const pref = basis?.claim.value ?? balance.preferredClaims?.value ?? null,
     nci = balance.minorityClaims?.value ?? null;
   const claims = pref !== null && nci !== null ? pref + nci : null;
   if (
     pref !== null &&
     pref > 0 &&
+    (!basis || (overrides.financial?.shares !== undefined) !== (overrides.financial?.otherClaims !== undefined)) &&
     (overrides.financial?.shares === undefined ||
       overrides.financial?.otherClaims === undefined)
   )
@@ -312,7 +325,7 @@ export function buildAutomaticBaseline(
     "Additional non-equity claims (USD m)",
     inputs.otherClaims,
     overrides.financial?.otherClaims !== undefined ? "estimated" : "calculated",
-    "Preferred + total noncontrolling claims require both reported components. Missing disclosures do not establish absence; supply a reviewed total.",
+    basis ? `${basis.claim.reason} Total noncontrolling interests are added once; redeemable interests included in that total are not added again.` : "Preferred + total noncontrolling claims require both reported components. Missing disclosures do not establish absence; supply a reviewed total.",
   );
   const equity =
     verifiedQuotePrice && inputs.shares

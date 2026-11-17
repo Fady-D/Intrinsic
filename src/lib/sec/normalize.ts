@@ -1,3 +1,4 @@
+import { issuerConcepts } from "./concepts";
 import type {
   CompanyFacts,
   FinancialPeriod,
@@ -105,6 +106,8 @@ function splitTag(tag: string): [string, string] {
   ];
 }
 function metricTags(ctx: Context, key: MetricKey): string[] {
+  if (ctx.taxonomy === "us-gaap" && key === "minorityClaims")
+    return [...tags.minorityClaims, ...(issuerConcepts[ctx.cik]?.minority ?? [])];
   if (ctx.taxonomy === "ifrs-full" && key === "periodEndShares")
     return [
       "EntityCommonStockSharesOutstanding",
@@ -244,6 +247,10 @@ function getTag(
       "EntityCommonStockSharesOutstanding",
       "CommonStockSharesOutstanding",
       "CashAndCashEquivalentsAtCarryingValue",
+      "Depreciation",
+      "DepreciationDepletionAndAmortization",
+      "DepreciationDepletionAndAmortizationPropertyPlantAndEquipment",
+      "AmortizationOfIntangibleAssets",
       "ShortTermInvestments",
       "MarketableSecuritiesCurrent",
     ].includes(tag) &&
@@ -263,8 +270,8 @@ function getTag(
     sources: [
       {
         source: "SEC EDGAR",
-        url: `https://data.sec.gov/api/xbrl/companyfacts/CIK${ctx.cik}.json`,
-        filingUrl: `https://www.sec.gov/Archives/edgar/data/${Number(ctx.cik)}/${f.accn.replaceAll("-", "")}/${f.accn}-index.html`,
+        url: f.sourceUrl ?? `https://data.sec.gov/api/xbrl/companyfacts/CIK${ctx.cik}.json`,
+        filingUrl: f.filingUrl ?? `https://www.sec.gov/Archives/edgar/data/${Number(ctx.cik)}/${f.accn.replaceAll("-", "")}/${f.accn}-index.html`,
         form: f.form,
         filed: f.filed,
         start: f.start,
@@ -272,7 +279,7 @@ function getTag(
         accession: f.accn,
         tag: `${namespace}:${concept}`,
         unit,
-        retrievedAt: ctx.retrievedAt,
+        retrievedAt: f.retrievedAt ?? ctx.retrievedAt,
       },
     ],
   };
@@ -519,10 +526,10 @@ export function reconcileTtm(
     ];
     if (
       inputs.some((x) => x.value === null) ||
-      new Set(inputs.map((x) => x.sources[0]?.tag)).size !== 1
+      (key !== "depreciation" && new Set(inputs.map((x) => x.sources.map(s => s.tag).sort().join("|"))).size !== 1)
     ) {
       m[key] = missing(
-        "TTM requires matching concepts in annual, current YTD and prior YTD.",
+        "TTM requires complete economically comparable metrics in annual, current YTD and prior YTD.",
       );
       continue;
     }
@@ -716,8 +723,8 @@ export function normalizeFinancials(
           ] as MetricKey[])
             if (
               quarter.metrics[key].value === null &&
-              interim.metrics[key].sources[0]?.tag ===
-                prev.metrics[key].sources[0]?.tag
+              (key === "depreciation" || interim.metrics[key].sources.map(s => s.tag).sort().join("|") ===
+                prev.metrics[key].sources.map(s => s.tag).sort().join("|"))
             )
               quarter.metrics[key] = derived(
                 [interim.metrics[key], prev.metrics[key]],
@@ -810,7 +817,42 @@ export function normalizeFinancials(
         warnings.push(`${key}: ${performance.metrics[key].reason}`);
   if (balance.debt.value === null)
     warnings.push(`Debt: ${balance.debt.reason}`);
+  let preferredBasis: VerifiedFinancials["preferredBasis"];
+  const pref = balance.preferredClaims;
+  if (taxonomy === "us-gaap" && pref.value !== null && pref.value > 0) {
+    const count = getTag(ctx, "PreferredStockSharesOutstanding", undefined, balanceEnd, "shares"),
+      perShare = getTag(ctx, "PreferredStockLiquidationPreference", undefined, balanceEnd, `${ctx.currency}/shares`);
+    const claim = count.value !== null && count.value > 0 && perShare.value !== null && perShare.value > 0 &&
+      count.sources[0]?.accession === perShare.sources[0]?.accession
+      ? derived([count, perShare], v => v[0] * v[1] * 1e6,
+        "Liquidation-basis preferred claim = reported outstanding preferred shares × liquidation preference per share. Share disclosures can be rounded; this is not carrying value or conversion value.")
+      : missing("Preferred liquidation terms are incomplete; carrying value is not assumed to equal liquidation preference.");
+    const period = interim ?? last;
+    if (period && period.end === balanceEnd && claim.value !== null) {
+      const diluted = getTag(ctx, "WeightedAverageNumberOfDilutedSharesOutstanding", period.start, period.end, "shares"),
+        conversion = getTag(ctx, "IncrementalCommonSharesAttributableToConversionOfPreferredStock", period.start, period.end, "shares");
+      if (diluted.value !== null && conversion.value !== null && conversion.value >= 0 && diluted.value > conversion.value &&
+        diluted.sources[0]?.accession === conversion.sources[0]?.accession) {
+        preferredBasis = { claim, shares: derived([diluted, conversion], v => v[0] - v[1],
+          "Latest reported diluted weighted-average shares less same-period preferred-conversion increment; preferred liquidation claim is deducted instead of also counting converted shares.") };
+        balance.preferredClaims = claim;
+        warnings.push("Preferred stock uses a liquidation-basis valuation proxy, based on reported (potentially rounded) outstanding shares. Future conversion terms, dividend settlement choices and unpaid cumulative dividends require review; they are not separately priced by this DCF.");
+      }
+    }
+  }
+  const subset = issuerConcepts[ctx.cik]?.redeemableSubset;
+  if (subset && balance.minorityClaims.value !== null) {
+    const redeemable = getTag(ctx, subset, undefined, balanceEnd, "USD");
+    if (redeemable.value !== null) {
+      if (redeemable.value > balance.minorityClaims.value || redeemable.value < 0)
+        balance.minorityClaims = missing("Redeemable NCI conflicts with reported total NCI.");
+      else balance.minorityClaims = { ...balance.minorityClaims,
+        reason: "Reported total noncontrolling interests includes redeemable noncontrolling interests; the redeemable subset is not added again.",
+        sources: [...balance.minorityClaims.sources, ...redeemable.sources] };
+    }
+  }
   return {
+    preferredBasis,
     currency,
     currencyCandidates: [...currencies].sort(),
     taxonomy,

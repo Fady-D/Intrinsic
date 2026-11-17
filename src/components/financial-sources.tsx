@@ -126,7 +126,7 @@ export default function FinancialSources({
                               Retrieved: {s.retrievedAt}
                               <br />
                               <a href={s.url} target="_blank" rel="noreferrer">
-                                SEC Company Facts JSON ↗
+                                {s.url.endsWith(".xml") ? "SEC filing XBRL ↗" : "SEC Company Facts JSON ↗"}
                               </a>
                             </p>
                           ))}
@@ -160,7 +160,7 @@ export default function FinancialSources({
           to be zero; total debt may require filing review.
         </p>
         {(
-          ["cash", "shortInvestments", "debt", "periodEndShares"] as MetricKey[]
+          ["cash", "shortInvestments", "debt", "periodEndShares", "preferredClaims", "minorityClaims"] as MetricKey[]
         ).map((key) => {
           const m = data.latestBalance.metrics[key];
           return (
@@ -182,6 +182,14 @@ export default function FinancialSources({
             </div>
           );
         })}
+        {data.preferredBasis && <div>
+          <strong>Shares excluding preferred conversion: {millions(data.preferredBasis.shares.value)}</strong>
+          <p>{data.preferredBasis.shares.reason}</p>
+          {data.preferredBasis.shares.sources.map((s, i) => <p key={i}>
+            <a href={s.filingUrl} target="_blank" rel="noreferrer">SEC {s.form} · filed {s.filed}</a>{" "}
+            · {s.tag} · {s.unit} · period {s.start} / {s.end} · accession {s.accession} · retrieved {s.retrievedAt}
+          </p>)}
+        </div>}
       </details>
       <details className="coverage-details">
         <summary>

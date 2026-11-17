@@ -60,6 +60,7 @@ export interface FinancialPeriod {
   fcfGrowth: number | null;
 }
 export interface VerifiedFinancials {
+  preferredBasis?: { claim: Metric; shares: Metric };
   currency?: string | null;
   currencyCandidates?: string[];
   taxonomy?: "us-gaap" | "ifrs-full" | "unknown";
@@ -89,6 +90,10 @@ export interface SecFact {
   form: string;
   filed: string;
   frame?: string;
+  sourceUrl?: string;
+  filingUrl?: string;
+  retrievedAt?: string;
+  decimals?: string;
 }
 export interface CompanyFacts {
   cik: number;

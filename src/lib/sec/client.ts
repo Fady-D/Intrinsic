@@ -3,8 +3,11 @@ import {
   emptyMetrics,
   normalizeFinancials,
   parseSubmissions,
+  parseCompanyFacts,
 } from "./normalize";
-import type { Submissions, VerifiedFinancials } from "./types";
+import { mergeFilingFacts } from "./filing-facts";
+import { issuerConcepts } from "./concepts";
+import type { SubmissionFiling, Submissions, VerifiedFinancials } from "./types";
 import {
   SecDirectoryService,
   secHeaders,
@@ -168,13 +171,45 @@ export class SecEdgarProvider implements FinancialResearchProvider {
       result.warnings = [result.eligibility.reason];
       return result;
     }
+    const supplementalWarnings: string[] = [];
+    const parsed = parseCompanyFacts(facts);
+    if (issuerConcepts[identity.cik] ||
+      (parsed.facts["us-gaap"]?.Depreciation && !parsed.facts["us-gaap"]?.DepreciationDepletionAndAmortization)) {
+      const recent = sub.filings.recent;
+      const filings = recent.form.flatMap((form, i): SubmissionFiling[] => {
+        const accessionNumber = recent.accessionNumber?.[i], filingDate = recent.filingDate[i],
+          reportDate = recent.reportDate[i], primaryDocument = recent.primaryDocument?.[i];
+        return typeof form === "string" && /^10-[KQ](\/A)?$/.test(form) &&
+          typeof accessionNumber === "string" && /^\d{10}-\d{2}-\d{6}$/.test(accessionNumber) &&
+          typeof filingDate === "string" && filingDate <= asOf && typeof reportDate === "string" && reportDate <= asOf &&
+          typeof primaryDocument === "string" && /^[a-zA-Z0-9_.-]+$/.test(primaryDocument)
+          ? [{ form, accessionNumber, filingDate, reportDate, primaryDocument }] : [];
+      }).sort((a, b) => b.filingDate.localeCompare(a.filingDate));
+      const selected = [filings[0], filings.find(f => /^10-K/.test(f.form))].filter((f, i, a): f is SubmissionFiling => !!f && a.indexOf(f) === i);
+      for (const filing of selected) {
+        try {
+          const base = `https://www.sec.gov/Archives/edgar/data/${Number(identity.cik)}/${filing.accessionNumber.replaceAll("-", "")}/`;
+          const options = { ttl: 3600000, force, headers, minInterval: 350 };
+          const index = await this.http.json(base + "index.json", options) as { directory?: { item?: { name: string }[] } };
+          const instances = index.directory?.item?.filter(f => /^[a-zA-Z0-9_.-]+_htm.xml$/.test(f.name)) ?? [];
+          if (instances.length !== 1) throw new Error("Ambiguous extracted instance");
+          const instanceUrl = base + instances[0].name;
+          const xml = await this.http.text(instanceUrl, options);
+          mergeFilingFacts(parsed, xml, filing, instanceUrl, base + filing.primaryDocument,
+            this.http.retrievedAt(instanceUrl) ?? new Date().toISOString());
+        } catch {
+          supplementalWarnings.push(`Supplemental filing XBRL unavailable for ${filing.reportDate}; unresolved claims or D&A remain missing.`);
+        }
+      }
+    }
     const data = normalizeFinancials(
-      facts,
+      parsed,
       submissions,
       identity.ticker,
       this.http.retrievedAt(url) ?? new Date().toISOString(),
       asOf,
     );
+    data.warnings.push(...supplementalWarnings);
     data.identity = identity;
     data.security = classification;
     data.eligibility = valuationEligibility(

@@ -11,6 +11,7 @@ export class ProviderError extends Error {
 }
 export interface HttpOptions {
   ttl: number;
+  responseType?: "text";
   force?: boolean;
   headers?: Record<string, string>;
   minInterval?: number;
@@ -34,6 +35,9 @@ export class CachedHttpClient {
     private sleep: (ms: number) => Promise<void> = (ms) =>
       new Promise((r) => setTimeout(r, ms)),
   ) {}
+  async text(url: string, options: HttpOptions): Promise<string> {
+    return (await this.json(url, { ...options, responseType: "text" })) as string;
+  }
   async json(url: string, options: HttpOptions): Promise<unknown> {
     const now = options.now ?? Date.now,
       hit = this.cache.get(url);
@@ -108,7 +112,7 @@ export class CachedHttpClient {
         );
       let value: unknown;
       try {
-        value = await response.json();
+        value = options.responseType === "text" ? await response.text() : await response.json();
       } catch {
         throw new ProviderError("Financial provider returned malformed JSON.");
       }
