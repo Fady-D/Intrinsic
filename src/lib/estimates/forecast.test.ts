@@ -62,7 +62,8 @@ describe("annual forecast integration", () => {
     expect(p.rows[0].source).toBe("FMP consensus");
     expect(p.rows[2].source).toBe("Model extrapolation");
     expect(p.growths[2]).toBeLessThan(0.1);
-    expect(p.growths[9]).toBeCloseTo(defaultAssumptions.growthLate);
+    expect(p.growths[9]).toBeLessThanOrEqual(0.06);
+    expect(p.explanation).toContain("Year-10 growth target");
   });
   it("rejects past, currency-mismatched, duplicated or unaligned estimates and identifies historical fallback", () => {
     const d = company();

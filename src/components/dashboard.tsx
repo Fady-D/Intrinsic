@@ -9,7 +9,6 @@ import {
   applySlowdown,
   calculateDcf,
   entryPrice,
-  updateScenario,
 } from "@/lib/finance/dcf";
 import type {
   Assumptions,
@@ -136,8 +135,9 @@ export default function Dashboard({
   blockingError?: string;
 }) {
   const demo = data.source.kind === "illustrative";
-  const [scenarios, setScenarios] = useState(() => structuredClone(defaults)),
-    [active, setActive] = useState<ScenarioId>("base");
+  const [scenarioEdits, setScenarioEdits] = useState<Record<string, Partial<Assumptions>>>({});
+  const scenarios = defaults.map(s=>({...s, assumptions:{...s.assumptions,...scenarioEdits[s.id]}}));
+  const [active, setActive] = useState<ScenarioId>("base");
   const [ticker, setTicker] = useState("ASTR"),
     [tickerError, setTickerError] = useState(""),
     [loading, setLoading] = useState(false);
@@ -146,12 +146,12 @@ export default function Dashboard({
   const [annualEdits, setAnnualEdits] = useState<
     Record<string, Record<string, number[]>>
   >({});
-  const revision = forecastPlan?.revision ?? "historical",
-    annualMode = forecastPlan && forecastPlan.mode !== "historical";
+  const revision = data.company.ticker,
+    annualMode = !!forecastPlan;
   const effectiveScenarios = scenarios.map((s) => {
     const annual = annualMode
       ? (annualEdits[revision]?.[s.id] ??
-        defaults.find((d) => d.id === s.id)?.assumptions.annualGrowth)
+        defaults.find((d) => d.id === s.id)?.assumptions.annualGrowth ?? stageGrowths(s.assumptions))
       : undefined;
     return {
       ...s,
@@ -174,6 +174,8 @@ export default function Dashboard({
     adjusted = evaluateSelected(
       applySlowdown(selected.assumptions, slowdown, period),
     );
+  const historicalComparison = forecastPlan?.mode === "consensus" && forecastPlan.historicalGrowths
+    ? evaluateSelected({ ...applySlowdown(selected.assumptions, slowdown, period), annualGrowth: applySlowdown({ ...selected.assumptions, annualGrowth: forecastPlan.historicalGrowths }, slowdown, period).annualGrowth }) : null;
   const result = adjusted.result,
     error = adjusted.error;
   async function search(e: React.FormEvent) {
@@ -195,7 +197,7 @@ export default function Dashboard({
     key: Exclude<keyof Assumptions, "annualGrowth">,
     value: number,
   ) {
-    setScenarios((prev) => updateScenario(prev, active, key, value));
+    setScenarioEdits(prev=>({...prev,[active]:{...prev[active],[key]:value}}));
   }
   const chartScenarios = outputs
     .filter((s) => s.result)
@@ -414,6 +416,20 @@ export default function Dashboard({
                   {blockingError}
                 </div>
               )}
+              {forecastPlan.explanation && <p className="table-note">{forecastPlan.explanation}</p>}
+              {historicalComparison && <div className="table-scroll">
+                <p>Growth-only sensitivity: same fiscal anchor, margins, tax, WACC, capital policy, shares and safety discount. Historical growth is the prior historical model, on this same fiscal basis. Neither forecast is necessarily more accurate.</p>
+                <table><thead><tr><th>Measure</th><th>Historical Growth</th><th>Hybrid / adjusted forecast</th></tr></thead><tbody>
+                {([
+                  ["Year 10 revenue", historicalComparison.result?.forecast[9].revenue, result?.forecast[9].revenue],
+                  ["Year 10 operating income", historicalComparison.result?.forecast[9].ebit, result?.forecast[9].ebit],
+                  ["Year 10 FCFF", historicalComparison.result?.forecast[9].fcff, result?.forecast[9].fcff],
+                  ["Intrinsic value / share", historicalComparison.result?.valuePerShare, result?.valuePerShare],
+                  ["Safety purchase price / share", historicalComparison.result?.entryPrice, result?.entryPrice],
+                ] as [string,number|undefined,number|undefined][]).map(([label,h,v])=><tr key={label}><th>{label}</th><td>{millions(h??null)}</td><td>{millions(v??null)}</td></tr>)}
+                </tbody></table>
+                <p>{historicalComparison.error ?? (historicalComparison.result && result ? `Intrinsic-value difference ${(result.valuePerShare-historicalComparison.result.valuePerShare).toFixed(2)} per share follows only from the revenue paths and their associated reinvestment requirements.` : "Comparison unavailable until both projections can be valued.")}</p>
+              </div>}
               <div className="table-scroll">
                 <table>
                   <thead>
@@ -601,22 +617,14 @@ export default function Dashboard({
                 <button
                   className="text-button"
                   onClick={() => {
-                    setScenarios((prev) =>
-                      prev.map((s) =>
-                        s.id === active
-                          ? structuredClone(defaults).find(
-                              (d) => d.id === active,
-                            )!
-                          : s,
-                      ),
-                    );
+                    setScenarioEdits(prev=>({...prev,[active]:{}}));
                     setAnnualEdits((prev) => ({
                       ...prev,
                       [revision]: {
                         ...prev[revision],
                         [active]:
                           defaults.find((s) => s.id === active)?.assumptions
-                            .annualGrowth ?? stageGrowths(selected.assumptions),
+                            .annualGrowth ?? stageGrowths(defaults.find(s=>s.id===active)!.assumptions),
                       },
                     }));
                     setSlowdown(0);
@@ -663,7 +671,7 @@ export default function Dashboard({
               <button
                 className="reset-all"
                 onClick={() => {
-                  setScenarios(structuredClone(defaults));
+                  setScenarioEdits({});
                   setAnnualEdits({});
                   setSlowdown(0);
                   setPeriod("all");
@@ -776,6 +784,11 @@ export default function Dashboard({
                     data={data}
                     result={result}
                     scenarios={chartScenarios}
+                    growthSources={forecastPlan?.rows.map((r,i)=> {
+                      const defaultsGrowth=defaults.find(s=>s.id===active)?.assumptions.annualGrowth ?? stageGrowths(defaults.find(s=>s.id===active)!.assumptions);
+                      const edited=(selected.assumptions.annualGrowth?.[i]??defaultsGrowth[i])!==defaultsGrowth[i] || result.forecast[i].growth!==(selected.assumptions.annualGrowth?.[i]??stageGrowths(selected.assumptions)[i]);
+                      return edited || forecastPlan.mode==="custom" || r.estimate?.source==="User-provided" ? "manual" : active!=="base" ? "modeled" : r.estimate ? "consensus" : "modeled";
+                    })}
                   />
                   <section className="panel bridge">
                     <div className="panel-heading">

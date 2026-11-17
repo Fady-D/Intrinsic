@@ -141,7 +141,7 @@ export default function ForecastWorkbench({
           <select
             aria-label="Forecast method"
             value={mode}
-            onChange={(e) => setMode(e.target.value as ForecastMode)}
+            onChange={(e) => { if(e.target.value === "custom") setCustom(prev=>prev??preview.growths); setMode(e.target.value as ForecastMode); }}
           >
             <option value="consensus">Analyst Consensus (preferred)</option>
             <option value="historical">Historical Growth</option>
@@ -170,8 +170,7 @@ export default function ForecastWorkbench({
         Historical growth: {percent(historical.growthEarly)} early /{" "}
         {percent(historical.growthMiddle)} middle /{" "}
         {percent(historical.growthLate)} late. Operating margins, reinvestment,
-        tax and WACC remain independent model assumptions; FMP EBIT is reference
-        only.
+        tax and WACC remain editable model assumptions. A reliable sales-to-capital proxy can floor total reinvestment; FMP EBIT is reference only.
       </p>
       <p className="table-note">
         <strong>
@@ -186,6 +185,7 @@ export default function ForecastWorkbench({
         </strong>
         . {preview.warnings.join(" ")}
       </p>
+      {preview.explanation && <p className="table-note">{preview.explanation}</p>}
       <div className="table-scroll">
         <table>
           <thead>

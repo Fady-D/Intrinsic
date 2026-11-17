@@ -168,8 +168,13 @@ export function calculateDcf(
     const ebit = revenue * margin,
       cashTaxes = ebit * a.taxRate;
     const depreciation = revenue * a.daRate,
-      capex = revenue * a.capexRate,
       changeInNwc = (revenue - previousRevenue) * a.nwcRate;
+    if (data.salesToCapital !== undefined && (!Number.isFinite(data.salesToCapital) || data.salesToCapital <= 0))
+      throw new Error("Sales-to-capital must be positive and finite.");
+    const required = data.salesToCapital ? Math.max(0, revenue - previousRevenue) / data.salesToCapital : null;
+    // A floor on TOTAL reinvestment, not an additional charge on top of CapEx/NWC.
+    const capex = required === null ? revenue * a.capexRate
+      : Math.max(revenue * a.capexRate, depreciation + required - changeInNwc);
     if (
       period === 1 &&
       fiscal?.elapsedActuals &&

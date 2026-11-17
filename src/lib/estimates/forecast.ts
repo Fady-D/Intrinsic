@@ -1,3 +1,4 @@
+import { growthFundamentals, bound } from "./fundamentals";
 import type {
   Assumptions,
   FinancialDataset,
@@ -90,6 +91,9 @@ export function buildRevenuePlan(
     warnings.push(
       "Custom Forecast needs ten finite growth rates greater than −100%.",
     );
+  const fundamentals = growthFundamentals(data, historical[0]);
+  if (mode !== "historical") warnings.push(fundamentals.reinvestmentWarning,
+    "Long-term growth is a model assumption, not verified consensus. Terminal growth remains separately editable; a material year-10-to-terminal change requires review.");
   const rows: RevenuePlan["rows"] = [];
   const activeAnchor=mode==="historical"?(data.ttm??annual):annual;
   const activeEnd=activeAnchor?.end??anchorEnd;
@@ -104,6 +108,10 @@ export function buildRevenuePlan(
       g = e.revenue / previous - 1;
       lastCovered = i;
       lastGrowth = g;
+      const age = e.updatedAt ? day(now)-day(e.updatedAt.slice(0,10)) : null;
+      if (age === null || !Number.isFinite(age)) warnings.push(`Estimate ${e.fiscalEnd}: revision date unavailable; freshness cannot be verified.`);
+      else if (age > 90) warnings.push(`Estimate ${e.fiscalEnd} is more than 90 days old; review before use.`);
+      if(g < -.25 || g > .5) warnings.push(`Extreme supplied growth for ${e.fiscalEnd} retained as supplied; modeled transition starts within −25%/+50% policy bounds.`);
       source = e.source;
     } else if (mode === "consensus") {
       const next = [...byYear.entries()]
@@ -113,11 +121,14 @@ export function buildRevenuePlan(
         g = (next[1].revenue / previous) ** (1 / (next[0] - i)) - 1;
         source = "Model interpolation";
       } else {
-        const progress = (i - lastCovered) / (10 - lastCovered - 1 || 1),
-          anchor = Number.isFinite(historical[9])
-            ? historical[9]
-            : a.terminalGrowth;
-        g = lastGrowth + (anchor - lastGrowth) * Math.min(1, progress);
+        const horizon = 9 - lastCovered;
+        const elapsed = i - lastCovered;
+        const speed = fundamentals.transition;
+        // Normalized exponential fade: continuous at consensus end, exactly reaches company-specific target at year 10.
+        const progress = (1-Math.exp(-speed*elapsed))/(1-Math.exp(-speed*horizon));
+        const start = bound(lastGrowth, -.25, .5);
+        const target = fundamentals.sustainable;
+        g = start + (target-start)*progress;
         source = "Model extrapolation";
       }
     }
@@ -136,6 +147,9 @@ export function buildRevenuePlan(
       "A positive completed fiscal-year revenue anchor is required.",
     );
   return {
+    historicalGrowths: historical,
+    salesToCapital: mode !== "historical" ? fundamentals.salesToCapital ?? undefined : undefined,
+    explanation: mode === "consensus" ? fundamentals.explanation : undefined,
     mode,
     requestedMode,
     growths: rows.map((r) => r.growth),
@@ -249,6 +263,7 @@ export function applyFiscalForecast(
 export function annualScenarioRates(
   base: number[],
   s: ValuationScenario,
+  covered = 0,
 ): number[] {
   const spread = Math.max(0.02, Math.abs(base[0]) * 0.25);
   return base.map((g, i) =>
@@ -259,7 +274,7 @@ export function annualScenarioRates(
           g +
             (s.id === "bear" ? -1 : 1) *
               spread *
-              (i < 3 ? 1 : i < 5 ? 0.6 : 0.25),
+              (covered > 0 ? (i < covered ? 0.25 : 0.5 + (i-covered+1)/(10-covered)) : (i < 3 ? 1 : i < 5 ? 0.6 : 0.25)),
         ),
   );
 }

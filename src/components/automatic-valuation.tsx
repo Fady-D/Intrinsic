@@ -102,7 +102,7 @@ export default function AutomaticValuation({
     b.dataset && forecastPlan
       ? applyFiscalForecast(data, b.dataset, forecastPlan)
       : null;
-  const scenarioDefaults=b.scenarios.map(s=>{const h=historical.scenarios.find(h=>h.id===s.id)!;return {...s,assumptions:{...s.assumptions,growthEarly:h.assumptions.growthEarly,growthMiddle:h.assumptions.growthMiddle,growthLate:h.assumptions.growthLate,annualGrowth:forward?annualScenarioRates(forward.growths,s):undefined}};});
+  const scenarioDefaults=b.scenarios.map(s=>{const h=historical.scenarios.find(h=>h.id===s.id)!;return {...s,assumptions:{...s.assumptions,growthEarly:h.assumptions.growthEarly,growthMiddle:h.assumptions.growthMiddle,growthLate:h.assumptions.growthLate,annualGrowth:forward?annualScenarioRates(forward.growths,s, Math.max(0,...forward.rows.map((r,i)=>r.estimate?i+1:0))):undefined}};});
   function financial(key: keyof ModelInputs, value: number | null) {
     setOverrides((prev) => ({
       ...prev,
@@ -337,9 +337,10 @@ export default function AutomaticValuation({
       </div>
       {(b.dataset ?? historical.dataset) && (
         <Dashboard
-          key={`${data.ticker}-${JSON.stringify(overrides)}-${riskFree?.rate ?? "no-rate"}-${verifiedQuotePrice ?? "book"}`}
+          key={data.ticker}
           data={{
             ...(fiscal?.dataset ?? b.dataset ?? historical.dataset!),
+            salesToCapital: forward?.salesToCapital,
             market: {
               ...(b.dataset ?? historical.dataset)!.market,
               price: price ?? 0,

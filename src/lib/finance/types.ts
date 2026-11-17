@@ -39,6 +39,7 @@ export interface MarketPrice {
   asOf: string;
 }
 export interface FinancialDataset {
+  salesToCapital?: number;
   fiscalForecast?: {
     anchorEnd: string;
     valuationEnd: string;

@@ -1,0 +1,50 @@
+import { expect, it } from "vitest";
+import { fixture } from "../sec/fixtures/company";
+import { normalizeFinancials } from "../sec/normalize";
+import { defaultAssumptions, illustrativeData } from "../data/illustrative";
+import { calculateDcf } from "../finance/dcf";
+import { buildRevenuePlan, annualScenarioRates } from "./forecast";
+import { growthFundamentals } from "./fundamentals";
+import type { RevenueEstimate } from "./types";
+const now = "2025-11-15";
+const company = () => { const {facts,sub}=fixture(); return normalizeFinancials(facts,sub,"TEST",now+"T00:00:00Z"); };
+const estimate = (year:number,revenue:number):RevenueEstimate=>({fiscalEnd:`${2025+year}-06-30`,revenue,currency:"USD",source:"FMP consensus",low:null,high:null,analysts:5,ebit:null,note:"",retrievedAt:now,updatedAt:now});
+it("uses one or additional consensus years exactly, compounds modeled years and widens scenario growth after coverage",()=>{
+  const d=company(), a=defaultAssumptions;
+  const p=buildRevenuePlan(d,a,"consensus",[estimate(1,1200),estimate(2,1392),estimate(3,1559.04)],undefined,now);
+  [1200,1392,1559.04].forEach((v,i)=>expect(p.rows[i].revenue).toBeCloseTo(v));
+  expect(p.growths[3]).toBeLessThan(p.growths[2]);
+  expect(p.growths[3]-p.growths[2]).toBeGreaterThan(-.08);
+  for(let i=1;i<10;i++) expect(p.rows[i].revenue).toBeCloseTo(p.rows[i-1].revenue*(1+p.growths[i]));
+  const bull=annualScenarioRates(p.growths,{id:"bull",label:"Bull",assumptions:a},3);
+  const bear=annualScenarioRates(p.growths,{id:"bear",label:"Bear",assumptions:a},3);
+  expect(bull[8]-bear[8]).toBeGreaterThan(bull[1]-bear[1]);
+  expect(buildRevenuePlan(d,a,"consensus",[estimate(1,1200)],undefined,now).rows[1].estimate).toBeNull();
+  expect(buildRevenuePlan(d,a,"consensus",[],undefined,now).mode).toBe("historical");
+});
+it("measures stable incremental capital needs only with complete comparable observations and produces company-specific growth targets",()=>{
+  const d=company(), template=d.annual.at(-1)!;
+  d.annual=Array.from({length:6},(_,i)=>{
+    const p=structuredClone(template), rev=1000*1.1**i, previous=rev/1.1;
+    p.start=`${2020+i}-07-01`; p.end=`${2021+i}-06-30`;
+    for(const [k,v] of Object.entries({revenue:rev,operatingIncome:rev*.2,operatingCashFlow:rev*.15,capex:(rev-previous)/2+rev*.04,depreciation:rev*.04,receivables:0,inventory:0,payables:0})) p.metrics[k as keyof typeof p.metrics].value=v;
+    return p;
+  }); d.ttm=null; d.interim=null;
+  const f=growthFundamentals(d,.1);
+  expect(f.c3).toBeCloseTo(.1); expect(f.c5).toBeCloseTo(.1); expect(f.salesToCapital).toBeCloseTo(2);
+  const slow=structuredClone(d);
+  slow.annual.forEach((p,i)=>{p.metrics.revenue.value=1000*1.02**i;});
+  expect(growthFundamentals(slow,.02).sustainable).toBeLessThan(f.sustainable);
+  d.annual.forEach(p=>{p.metrics.depreciation.value=null;});
+  expect(growthFundamentals(d,.1).salesToCapital).toBeNull();
+});
+it("floors total reinvestment without double counting, preserves heavier user investment and carries the policy into terminal FCFF",()=>{
+  const data={...illustrativeData,salesToCapital:2};
+  const a={...defaultAssumptions,annualGrowth:Array(10).fill(.2),daRate:.04,capexRate:.04,nwcRate:0};
+  const r=calculateDcf(data,a), year=r.forecast[0];
+  expect(year.capex-year.depreciation+year.changeInNwc).toBeCloseTo((year.revenue-1000)/2);
+  expect(year.fcff).toBeCloseTo(year.nopat-(year.revenue-1000)/2);
+  expect(r.terminalYear.capex-r.terminalYear.depreciation+r.terminalYear.changeInNwc).toBeGreaterThanOrEqual((r.terminalYear.revenue-r.forecast[9].revenue)/2-1e-8);
+  const heavy={...a,capexRate:.3};
+  expect(calculateDcf(data,heavy).valuePerShare).toBeCloseTo(calculateDcf(illustrativeData,heavy).valuePerShare);
+});

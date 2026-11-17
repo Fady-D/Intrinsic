@@ -20,6 +20,9 @@ export interface EstimateResponse {
 }
 export type ForecastMode = "consensus" | "historical" | "custom";
 export interface RevenuePlan {
+  historicalGrowths?: number[];
+  salesToCapital?: number;
+  explanation?: string;
   mode: ForecastMode;
   requestedMode: ForecastMode;
   growths: number[];

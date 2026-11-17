@@ -8,6 +8,7 @@ import {
   Cell,
   Line,
   LineChart,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -60,10 +61,12 @@ export default function Charts({
   data,
   result,
   scenarios,
+  growthSources,
 }: {
   data: FinancialDataset;
   result: DcfResult;
   scenarios: { name: string; value: number }[];
+  growthSources?: ("consensus"|"modeled"|"manual")[];
 }) {
   const revenue = [
     ...data.incomeStatements.map((r, i, arr) => ({
@@ -83,8 +86,26 @@ export default function Charts({
     margin: r.margin * 100,
     pv: r.presentValue,
   }));
+  const growth = [
+    ...data.incomeStatements.flatMap((r,i,all)=> {
+      const prev=all[i-1];
+      if(!prev || prev.revenue<=0) return [];
+      const span=r.periodLabel && prev.periodLabel ? (Date.parse(r.periodLabel)-Date.parse(prev.periodLabel))/86400000 : (r.year-prev.year)*365;
+      return span>=350 && span<=380 ? [{year:r.periodLabel??String(r.year),actual:100*(r.revenue/prev.revenue-1)}] : [];
+    }),
+    ...result.forecast.map((r,i)=>({year:r.fiscalEnd??String(r.year),[growthSources?.[i]??"modeled"]:r.growth*100})),
+  ];
   return (
     <div className="charts-grid">
+      <Frame title="Revenue growth by source" caption="% · actual / consensus / model / user">
+        <ResponsiveContainer width="100%" height="100%"><LineChart data={growth}>
+          <CartesianGrid vertical={false} stroke="#27323a"/><XAxis dataKey="year" {...axis}/><YAxis {...axis} unit="%"/><Tooltip {...tooltip}/><Legend/>
+          <Line name="Historical actual" dataKey="actual" stroke="#8f9baa" dot/>
+          <Line name="Analyst consensus" dataKey="consensus" stroke="#7ebdb0" dot/>
+          <Line name="Model projected" dataKey="modeled" stroke="#aaa0df" strokeDasharray="5 4" dot/>
+          <Line name="User adjusted" dataKey="manual" stroke="#db967d" dot/>
+        </LineChart></ResponsiveContainer>
+      </Frame>
       <Frame title="Revenue trajectory" caption="USD m · historical + forecast">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={revenue}>
