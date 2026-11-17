@@ -76,6 +76,8 @@ const fields: {
     max: 60,
     hint: "Applied to the change in revenue; contraction releases working capital.",
   },
+  { key: "terminalRoic", label: "Sustainable terminal ROIC", min: .5, max: 40, step: .1,
+    hint: "Default: baseline WACC as an explicit competitive-return policy. Terminal reinvestment = terminal NOPAT × growth / ROIC; no extra CapEx charge. This is not measured company ROIC." },
   { key: "wacc", label: "WACC", min: 0.5, max: 25, step: 0.1 },
   {
     key: "terminalGrowth",
@@ -423,6 +425,8 @@ export default function Dashboard({
             {fieldErrors.annualGrowth && <p role="alert">{fieldErrors.annualGrowth} Correct the corresponding annual growth input below.</p>}
             <p>Each scenario is calculated independently. Invalid edits are retained for correction; no earlier valuation is substituted for them.</p>
           </section>
+          {result && result.terminalWeight!==null && Math.abs(result.terminalWeight)>.6 && <p className="alert">Terminal value contributes {percent(result.terminalWeight)} of enterprise value. Review sustainable ROIC, growth and WACC; distant cash flows dominate this estimate.</p>}
+          {result && Math.abs(result.terminalYear.fcff-result.forecast[9].fcff)>.25*Math.max(1,Math.abs(result.forecast[9].fcff)) && <p className="alert">Terminal FCFF changes by more than 25% from year 10. Review the transition from explicit investment spending to stable ROIC economics; the terminal assumption may require a longer transition.</p>}
           {forecastPlan && (
             <section className="panel">
               <div className="panel-heading">
@@ -681,7 +685,7 @@ export default function Dashboard({
               {fields
                 .filter(
                   (f) =>
-                    (!["capexNearRate","capexHoldYears","capexNormalizationYears","daNearRate"].includes(f.key) || selected.assumptions[f.key] !== undefined) && (!annualMode ||
+                    (!["capexNearRate","capexHoldYears","capexNormalizationYears","daNearRate","terminalRoic"].includes(f.key) || selected.assumptions[f.key] !== undefined) && (!annualMode ||
                     !["growthEarly", "growthMiddle", "growthLate"].includes(
                       f.key,
                     )),
@@ -941,6 +945,7 @@ export default function Dashboard({
                         ["Finance-lease asset additions (unavailable unless entered)", "leaseAssetAdditions"],
                         ["− Total modeled capital investment", "capex"],
                         ["− Change in NWC", "changeInNwc"],
+                        ["Net reinvestment (total CapEx − D&A + ΔNWC)", "reinvestment"],
                         ["Full-year FCFF", "fcff"],
                         ...(data.fiscalForecast
                           ? [
@@ -1092,7 +1097,7 @@ export default function Dashboard({
               margin and the same reinvestment ratios.
             </p>
             <p>
-              Terminal value = year 11 FCFF / (WACC − terminal growth).
+              When sustainable ROIC is supplied, terminal FCFF = terminal NOPAT × (1 − growth / ROIC), replacing terminal ratio-based reinvestment. Without it, the disclosed ratio fallback remains. Terminal value = year 11 FCFF / (WACC − terminal growth).
               Enterprise value includes the present value of forecast FCFF and
               terminal value. Equity adds excess cash and subtracts debt and
               other claims. Diluted shares remain constant. Negative flows and

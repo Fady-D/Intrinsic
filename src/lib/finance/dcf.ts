@@ -172,9 +172,15 @@ export function calculateDcf(
     const reportedFloor = a.capexNearRate !== undefined && period === 1 ? fiscal?.elapsedActuals?.capex ?? 0 : 0;
     // Unknown lease additions remain an explicit scope limitation, never a reported zero.
     const leaseAssetAdditions=a.financeLeaseInvestmentRate===undefined?undefined:revenue*a.financeLeaseInvestmentRate;
-    const cashCapex = Math.max(plannedCapex, reportedFloor,
+    let cashCapex = Math.max(plannedCapex, reportedFloor,
       required === null ? plannedCapex : depreciation + required - changeInNwc - (leaseAssetAdditions??0));
-    const capex=cashCapex+(leaseAssetAdditions??0);
+    let capex=cashCapex+(leaseAssetAdditions??0);
+    if(period===11 && a.terminalRoic!==undefined) {
+      const sustainableInvestment=ebit*(1-a.taxRate)*a.terminalGrowth/a.terminalRoic;
+      capex=depreciation+sustainableInvestment-changeInNwc;
+      cashCapex=capex-(leaseAssetAdditions??0);
+      if(ebit<0 || capex<0 || cashCapex<0) throw new Error("Terminal ROIC model cannot reconcile positive sustainable earnings, working capital and capital spending. Review terminal margins, ROIC or lease investment.");
+    }
     if (
       period === 1 &&
       fiscal?.elapsedActuals &&
@@ -186,7 +192,8 @@ export function calculateDcf(
       throw new Error(
         "Full-fiscal-year revenue, D&A or CapEx is below the amount already reported YTD. Review the revenue profile and reinvestment assumptions.",
       );
-    const cashFlow = fcff(ebit, a.taxRate, depreciation, capex, changeInNwc);
+    const reinvestment=capex-depreciation+changeInNwc;
+    const cashFlow = ebit*(1-a.taxRate)-reinvestment;
     const fiscalEnd = fiscal?.yearEnds[period - 1],
       discountPeriod = fiscal
         ? (Date.parse(fiscalEnd ?? fiscal.yearEnds[9]) -
@@ -223,6 +230,7 @@ export function calculateDcf(
       cashCapex,
       ...(leaseAssetAdditions!==undefined?{leaseAssetAdditions}:{}),
       changeInNwc,
+      reinvestment,
       fcff: cashFlow,
       discountFactor: 1 / (1 + a.wacc) ** discountPeriod,
       presentValue: discount(remainingFcff, a.wacc, discountPeriod),

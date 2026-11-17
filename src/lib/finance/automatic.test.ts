@@ -64,10 +64,13 @@ describe("automatic fundamentals and WACC", () => {
     expect(b.status).toBe("Provisional");
     const r = calculateDcf(b.dataset!, b.scenarios[1].assumptions);
     expect(r.forecast[0].fcff).toBe(130);
-    expect(r.enterpriseValue).toBeCloseTo(1300);
-    expect(r.equityValue).toBeCloseTo(1250);
-    expect(r.valuePerShare).toBeCloseTo(12.5);
-    expect(r.entryPrice).toBeCloseTo(9.375);
+    // Zero stable growth requires zero net reinvestment in the ROIC framework:
+    // terminal NOPAT is 150, while explicit-year FCFF remains 130.
+    const expectedEv=130*(1-1/1.1**10)/.1+1500/1.1**10;
+    expect(r.enterpriseValue).toBeCloseTo(expectedEv);
+    expect(r.equityValue).toBeCloseTo(expectedEv-50);
+    expect(r.valuePerShare).toBeCloseTo((expectedEv-50)/100);
+    expect(r.entryPrice).toBeCloseTo((expectedEv-50)/100*.75);
     expect(b.inputs.acknowledged).toBe(false);
   });
   it("does not turn absent claims, debt or current risk-free rates into zeros", () => {

@@ -1,5 +1,6 @@
 import type { Assumptions } from "./types";
 export const assumptionLabels: Record<Exclude<keyof Assumptions,"annualGrowth" | "annualCapex">,string> = {
+  terminalRoic:"Sustainable terminal ROIC",
   financeLeaseYtdAdditions:"YTD finance-lease asset additions",
   financeLeaseInvestmentRate:"Finance-lease asset additions / revenue",
   capexHoldYears:"CapEx expansion years",capexNormalizationYears:"CapEx normalization year",capexCurve:"CapEx transition curvature",daNearRate:"Starting D&A / revenue",
@@ -14,7 +15,7 @@ export function assumptionErrors(a: Assumptions): AssumptionErrors {
   const errors: AssumptionErrors = {};
   for(const [key,label] of Object.entries(assumptionLabels) as [Exclude<keyof Assumptions,"annualGrowth" | "annualCapex">,string][]) {
     const v=a[key];
-    if(["capexNearRate","capexHoldYears","capexNormalizationYears","capexCurve","daNearRate","financeLeaseInvestmentRate","financeLeaseYtdAdditions"].includes(key) && v===undefined) continue;
+    if(["capexNearRate","capexHoldYears","capexNormalizationYears","capexCurve","daNearRate","financeLeaseInvestmentRate","financeLeaseYtdAdditions","terminalRoic"].includes(key) && v===undefined) continue;
     if(typeof v!=="number" || !Number.isFinite(v)) errors[key]=`${label} is unavailable or invalid; enter a finite number.`;
   }
   const range=(key:Exclude<keyof Assumptions,"annualGrowth" | "annualCapex">, low:number, high:number, description:string)=>{
@@ -33,6 +34,8 @@ export function assumptionErrors(a: Assumptions): AssumptionErrors {
     if(!errors[k] && a[k]<=-1) errors[k]=`${assumptionLabels[k]} must exceed −100%.`;
   if(a.financeLeaseYtdAdditions!==undefined && a.financeLeaseYtdAdditions<0) errors.financeLeaseYtdAdditions="YTD finance-lease asset additions must be nonnegative.";
   if(a.financeLeaseInvestmentRate!==undefined) range("financeLeaseInvestmentRate",0,1,"must be between 0% and 100%.");
+  if(a.terminalRoic!==undefined && (!Number.isFinite(a.terminalRoic) || a.terminalRoic<=0 || a.terminalRoic>1 || a.terminalGrowth<0 || a.terminalGrowth>a.terminalRoic))
+    errors.terminalRoic="Stable-growth ROIC must be positive and at most 100%, with 0 ≤ terminal growth ≤ ROIC. Review the stable-state economics.";
   if(a.daNearRate!==undefined) range("daNearRate",0,1,"must be between 0% and 100%.");
   for(const [key,min,max] of [["capexHoldYears",1,4],["capexNormalizationYears",3,10]] as const)
     if(a[key]!==undefined && (!Number.isInteger(a[key]) || a[key]!<min || a[key]!>max)) errors[key]=`${assumptionLabels[key]} must be an integer from ${min} to ${max}.`;

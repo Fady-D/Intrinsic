@@ -344,10 +344,13 @@ export function buildAutomaticBaseline(
     overrides.financial?.otherClaims !== undefined ? "estimated" : "calculated",
     basis ? `${basis.claim.reason} Total noncontrolling interests are added once; redeemable interests included in that total are not added again.` : "Preferred + total noncontrolling claims require both reported components. Missing disclosures do not establish absence; supply a reviewed total.",
   );
-  const equity =
-    verifiedQuotePrice && inputs.shares
-      ? verifiedQuotePrice * inputs.shares
-      : (balance.bookEquity?.value ?? null);
+  const marketEquity = verifiedQuotePrice && balance.periodEndShares.value!==null && balance.periodEndShares.value>0
+    ? verifiedQuotePrice*balance.periodEndShares.value : null;
+  const equity = marketEquity ?? balance.bookEquity?.value ?? null;
+  note("Equity capital used for WACC",overrides.wacc?.equityCapital ?? equity,"estimated",
+    overrides.wacc?.equityCapital!==undefined ? "User-reviewed equity-capital override." : marketEquity!==null
+      ? "Non-stale quote × latest reported common shares; not diluted EPS shares. Multi-class issuers still require review of class prices."
+      : "Explicit book-equity proxy: reliable quote and common-share market capitalization unavailable. This is not market equity; review weights or enter equity capital/direct WACC.");
   const rf = overrides.wacc?.riskFree ?? riskFree?.rate ?? null;
   const waccInputs: WaccInputs = {
     riskFree: rf,
@@ -376,7 +379,7 @@ export function buildAutomaticBaseline(
   warnings.push(
     "Beta 1.0, ERP 5% and a 2% borrowing spread are explicit editable risk-policy estimates, not measured company beta, current ERP or observed borrowing yields.",
   );
-  if (!verifiedQuotePrice)
+  if (marketEquity===null)
     warnings.push(
       "Capital weights use positive reported book equity as a market-equity proxy; hypothetical reference prices do not change WACC weights.",
     );
@@ -417,6 +420,7 @@ export function buildAutomaticBaseline(
     terminalGrowth: Number.isFinite(wacc)
       ? Math.min(0.02, Math.max(0, growth * 0.25), Math.max(0, wacc - 0.03))
       : 0.02,
+    ...(Number.isFinite(wacc) && wacc>0 ? {terminalRoic:wacc} : {}),
     marginOfSafety: 0.25,
     shares: inputs.shares ?? NaN,
     ...overrides.assumptions,
@@ -433,6 +437,7 @@ export function buildAutomaticBaseline(
     );
     if (i >= 0) issues.splice(i, 1);
   }
+  warnings.push("Stable-state terminal ROIC defaults to baseline WACC: an explicit competitive-return policy estimate, not measured company ROIC. Stable reinvestment replaces the terminal CapEx-ratio method and is not an extra deduction. Review it alongside terminal margins and growth.");
   const marginSpread = Math.max(
       0.02,
       (Math.max(...margins) - Math.min(...margins)) * 0.25 || 0.02,

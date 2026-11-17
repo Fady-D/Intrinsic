@@ -80,6 +80,7 @@ export interface Assumptions {
   nwcRate: number;
   wacc: number;
   terminalGrowth: number;
+  terminalRoic?: number;
   marginOfSafety: number;
   shares: number;
 }
@@ -101,6 +102,7 @@ export interface ForecastYear {
   cashCapex?: number;
   leaseAssetAdditions?: number;
   changeInNwc: number;
+  reinvestment?: number;
   fcff: number;
   discountFactor: number;
   presentValue: number;
