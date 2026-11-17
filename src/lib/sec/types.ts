@@ -1,3 +1,8 @@
+import type {
+  SecurityIdentity,
+  SecurityClassification,
+  ValuationEligibility,
+} from "../securities/symbols";
 export type MetricKey =
   | "revenue"
   | "operatingIncome"
@@ -22,7 +27,7 @@ export interface Provenance {
   end: string;
   accession: string;
   tag: string;
-  unit: "USD" | "shares";
+  unit: string;
   retrievedAt: string;
 }
 export interface Metric {
@@ -42,6 +47,12 @@ export interface FinancialPeriod {
   fcfGrowth: number | null;
 }
 export interface VerifiedFinancials {
+  currency?: string | null;
+  currencyCandidates?: string[];
+  taxonomy?: "us-gaap" | "ifrs-full" | "unknown";
+  identity?: SecurityIdentity;
+  security?: SecurityClassification;
+  eligibility?: ValuationEligibility;
   ticker: string;
   cik: string;
   name: string;
@@ -79,6 +90,9 @@ export interface SubmissionFiling {
   primaryDocument: string;
 }
 export interface Submissions {
+  sic?: string | number;
+  sicDescription?: string;
+  entityType?: string;
   cik: string;
   name: string;
   fiscalYearEnd: string;

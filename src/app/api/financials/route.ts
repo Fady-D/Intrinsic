@@ -1,4 +1,5 @@
 import { SecEdgarProvider } from "@/lib/sec/client";
+import { DirectoryError } from "@/lib/securities/directory";
 import { ProviderError } from "@/lib/server/http";
 export const runtime = "nodejs";
 export async function GET(request: Request) {
@@ -13,7 +14,10 @@ export async function GET(request: Request) {
     return Response.json(
       { error: e instanceof Error ? e.message : "Financial retrieval failed." },
       {
-        status: e instanceof ProviderError ? e.status : 502,
+        status:
+          e instanceof ProviderError || e instanceof DirectoryError
+            ? e.status
+            : 502,
         headers: { "Cache-Control": "no-store" },
       },
     );

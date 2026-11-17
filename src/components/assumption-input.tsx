@@ -22,6 +22,8 @@ export default function AssumptionInput({
 }: Props) {
   const scale = unit === "%" ? 100 : 1;
   const display = Number((value * scale).toFixed(4));
+  const sliderMin = Math.min(min, display),
+    sliderMax = Math.max(max, display);
   const [draft, setDraft] = useState<string | null>(null);
   return (
     <label className="assumption">
@@ -31,8 +33,8 @@ export default function AssumptionInput({
           <input
             aria-label={label}
             type="number"
-            min={min}
-            max={max}
+            min={sliderMin}
+            max={sliderMax}
             step={step}
             value={draft ?? display}
             onChange={(e) => {
@@ -49,8 +51,8 @@ export default function AssumptionInput({
       <input
         aria-label={`${label} slider`}
         type="range"
-        min={min}
-        max={max}
+        min={sliderMin}
+        max={sliderMax}
         step={step}
         value={display}
         onChange={(e) => {

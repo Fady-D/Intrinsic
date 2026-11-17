@@ -1333,3 +1333,107 @@ footer {
     padding-right: 12px;
   }
 }
+
+.ticker-search {
+  position: relative;
+  flex: 1;
+  min-width: 260px;
+  max-width: 600px;
+  margin: 14px 0;
+}
+.ticker-search > label {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ticker-search > input {
+  width: 100%;
+}
+.ticker-suggestions {
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  right: 0;
+  top: 100%;
+  background: #16242b;
+  border: 1px solid #476354;
+  border-radius: 6px;
+  box-shadow: 0 12px 30px #0008;
+  max-height: 360px;
+  overflow: auto;
+}
+.ticker-suggestions > p {
+  font-size: 10px;
+  color: #a3beb1;
+  padding: 12px;
+}
+.ticker-suggestions ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 !important;
+}
+.research-search-form .ticker-suggestions button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid #2d4038;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  padding: 12px;
+  font-size: 11px;
+}
+.ticker-suggestions button:hover,
+.ticker-suggestions button[aria-selected="true"] {
+  background: #284737;
+}
+.ticker-suggestions strong {
+  color: #b9e0cc;
+}
+.ticker-suggestions span {
+  overflow-wrap: anywhere;
+}
+.ticker-suggestions small {
+  font-size: 9px;
+  color: #92aca0;
+}
+.security-status > p {
+  font-size: 12px;
+}
+.security-status > a {
+  font-size: 11px;
+  color: var(--accent);
+}
+.security-status.valuation-blocked {
+  border-color: #746342;
+}
+.classification-evidence {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 16px 0;
+}
+.classification-evidence li {
+  margin: 5px 0;
+}
+@media (max-width: 680px) {
+  .ticker-search {
+    min-width: 0;
+    flex-basis: 100%;
+    width: 100%;
+  }
+  .research-search-form .ticker-suggestions button {
+    grid-template-columns: 55px minmax(0, 1fr);
+    padding: 11px 8px;
+  }
+  .ticker-suggestions small {
+    grid-column: 2;
+  }
+  .ticker-suggestions {
+    max-height: 300px;
+  }
+}

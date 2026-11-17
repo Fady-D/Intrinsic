@@ -46,16 +46,17 @@ export default function FinancialSources({
         <span>
           CIK {data.cik} · fiscal year end {data.fiscalYearEnd}
           <br />
-          {covered}/14 performance metrics covered
+          {covered}/{Object.keys(labels).length} performance metrics covered
           <br />
           Latest report: {data.latestBalance.end}
         </span>
       </div>
       <p className="table-note">
-        USD millions and millions of shares. Annual, YTD, quarter and TTM
-        columns are distinct. Click a value’s source details to see its exact
-        filing and XBRL concept. Reported FCF is operating cash flow minus
-        CapEx; it is not forecast FCFF.
+        {data.currency ?? "Undetermined currency"} millions and millions of
+        shares. Annual, YTD, quarter and TTM columns are distinct. Click a
+        value’s source details to see its exact filing and XBRL concept.
+        Reported FCF is operating cash flow minus CapEx; it is not forecast
+        FCFF.
       </p>
       <div className="table-scroll">
         <table>

@@ -21,13 +21,13 @@ describe("SEC provider and resilient HTTP", () => {
       resolveCik({ 0: { ticker: "MSFT", cik_str: "bad" } }, "MSFT"),
     ).toThrow();
   });
-  it("rejects missing SEC contact and unsupported tickers without network requests", async () => {
+  it("rejects missing SEC contact and empty searches without network requests", async () => {
     const fetcher = vi.fn();
     const p = new SecEdgarProvider(new CachedHttpClient(fetcher), "");
     await expect(p.getCompanyFinancials("MSFT")).rejects.toThrow(
       "SEC_USER_AGENT",
     );
-    await expect(p.getCompanyFinancials("ZZZ")).rejects.toThrow("Supported");
+    await expect(p.getCompanyFinancials("")).rejects.toThrow("Enter a ticker");
     expect(fetcher).not.toHaveBeenCalled();
   });
   it("parses SEC responses through the provider contract", async () => {
@@ -36,7 +36,8 @@ describe("SEC provider and resilient HTTP", () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         Response.json({
-          0: { ticker: "MSFT", cik_str: 1234, title: "Fixture" },
+          fields: ["cik", "name", "ticker", "exchange"],
+          data: [[1234, "Fixture", "MSFT", "Nasdaq"]],
         }),
       )
       .mockResolvedValueOnce(Response.json(sub))

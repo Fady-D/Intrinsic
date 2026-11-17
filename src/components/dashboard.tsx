@@ -201,13 +201,13 @@ export default function Dashboard({
           </a>
         </nav>
         <div className="sidebar-bottom">
-          <span className="status-dot" /> Phase 2 · Research workspace
+          <span className="status-dot" /> Phase 3 · Research workspace
           <p>
             Built on fundamentals.
             <br />
             Driven by your assumptions.
           </p>
-          <span className="version">INTRINSIC / 0.2</span>
+          <span className="version">INTRINSIC / 0.3</span>
         </div>
       </aside>
       <main>

@@ -88,6 +88,12 @@ export function initializationIssues(
 ): string[] {
   const p = data.ttm ?? data.annual.at(-1),
     issues: string[] = [];
+  if (data.eligibility && !data.eligibility.eligible)
+    issues.push(data.eligibility.reason);
+  if (data.currency !== undefined && data.currency !== "USD")
+    issues.push(
+      "The existing DCF requires a consistently reported USD financial dataset. No currency conversion is assumed.",
+    );
   for (const key of ["revenue", "operatingIncome", "capex"] as const)
     if (p?.metrics[key].value == null)
       issues.push(`Missing reliable ${key} for the model's reporting period.`);

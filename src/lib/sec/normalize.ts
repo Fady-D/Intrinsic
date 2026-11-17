@@ -24,10 +24,7 @@ export const tags = {
     "PaymentsToAcquirePropertyPlantAndEquipment",
     "PaymentsToAcquireProductiveAssets",
   ],
-  depreciation: [
-    "DepreciationDepletionAndAmortization",
-    "DepreciationDepletionAndAmortizationPropertyPlantAndEquipment",
-  ],
+  depreciation: ["DepreciationDepletionAndAmortization"],
   stockCompensation: ["ShareBasedCompensation"],
   dilutedShares: ["WeightedAverageNumberOfDilutedSharesOutstanding"],
   cash: ["CashAndCashEquivalentsAtCarryingValue"],
@@ -43,6 +40,48 @@ export const tags = {
   ],
   reportedFcf: [],
 } satisfies Record<MetricKey, string[]>;
+// IFRS concepts stay in their own taxonomy and reporting currency. Broad financial-asset
+// or pretax-profit concepts are deliberately not treated as short-term investments or EBIT.
+export const ifrsTags: Record<MetricKey, string[]> = {
+  revenue: ["Revenue", "RevenueFromContractsWithCustomers"],
+  operatingIncome: ["ProfitLossFromOperatingActivities"],
+  netIncome: ["ProfitLoss"],
+  operatingCashFlow: ["CashFlowsFromUsedInOperatingActivities"],
+  capex: [
+    "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
+    "PurchaseOfPropertyPlantAndEquipment",
+  ],
+  depreciation: [
+    "DepreciationDepletionAndAmortisation",
+    "DepreciationAndAmortisationExpense",
+  ],
+  stockCompensation: ["SharebasedPaymentArrangementExpense"],
+  dilutedShares: ["WeightedAverageNumberOfDilutedSharesOutstanding"],
+  cash: ["CashAndCashEquivalents"],
+  shortInvestments: [],
+  debt: ["CurrentBorrowings", "NoncurrentBorrowings"],
+  periodEndShares: ["NumberOfSharesOutstanding"],
+  reportedFcf: [],
+};
+const annualForm = /^(10-K|20-F|40-F)(\/A)?$/;
+const financialForm = /^(10-[KQ]|20-F|40-F|6-K)(\/A)?$/;
+function splitTag(tag: string): [string, string] {
+  if (tag.includes(":")) return tag.split(":") as [string, string];
+  return [
+    tag === "EntityCommonStockSharesOutstanding" ? "dei" : "us-gaap",
+    tag,
+  ];
+}
+function metricTags(ctx: Context, key: MetricKey): string[] {
+  if (ctx.taxonomy === "ifrs-full" && key === "periodEndShares")
+    return [
+      "EntityCommonStockSharesOutstanding",
+      ...ifrsTags[key].map((t) => "ifrs-full:" + t),
+    ];
+  return ctx.taxonomy === "ifrs-full"
+    ? ifrsTags[key].map((tag) => "ifrs-full:" + tag)
+    : tags[key];
+}
 const keys = Object.keys(tags) as MetricKey[];
 const day = (date: string) => Date.parse(date + "T00:00:00Z") / 86400000;
 export const days = (start: string, end: string) => day(end) - day(start) + 1;
@@ -74,12 +113,14 @@ export function parseCompanyFacts(raw: unknown): CompanyFacts {
   if (
     typeof r.cik !== "number" ||
     !Number.isInteger(r.cik) ||
-    !r.entityName ||
+    typeof r.entityName !== "string" ||
     !r.facts ||
     typeof r.facts !== "object" ||
-    !r.facts["us-gaap"]
+    (!r.facts["us-gaap"] && !r.facts["ifrs-full"])
   )
-    throw new Error("SEC company facts lack identity or US-GAAP concepts.");
+    throw new Error(
+      "SEC company facts lack identity or supported US-GAAP/IFRS concepts.",
+    );
   return r as CompanyFacts;
 }
 export function parseSubmissions(raw: unknown): Submissions {
@@ -102,11 +143,12 @@ interface Context {
   asOf: string;
   retrievedAt: string;
   cik: string;
+  currency: string;
+  taxonomy: "us-gaap" | "ifrs-full";
 }
 function candidates(ctx: Context, tag: string, unit: string): SecFact[] {
-  const namespace =
-    tag === "EntityCommonStockSharesOutstanding" ? "dei" : "us-gaap";
-  const list = ctx.facts.facts[namespace]?.[tag]?.units?.[unit];
+  const [namespace, concept] = splitTag(tag);
+  const list = ctx.facts.facts[namespace]?.[concept]?.units?.[unit];
   if (!Array.isArray(list)) return [];
   return list.filter(
     (f) =>
@@ -120,7 +162,7 @@ function candidates(ctx: Context, tag: string, unit: string): SecFact[] {
       f.filed <= ctx.asOf &&
       f.end <= ctx.asOf &&
       (f.start === undefined || (validDate(f.start) && f.start <= f.end)) &&
-      /^10-[KQ](\/A)?$/.test(f.form),
+      financialForm.test(f.form),
   );
 }
 function getTag(
@@ -128,8 +170,9 @@ function getTag(
   tag: string,
   start: string | undefined,
   end: string,
-  unit: "USD" | "shares",
+  unit: string,
 ): Metric {
+  unit = unit === "USD" ? ctx.currency : unit;
   const matches = candidates(ctx, tag, unit)
     .filter(
       (f) =>
@@ -151,6 +194,8 @@ function getTag(
     return missing(`Conflicting same-filing facts for ${tag} on ${end}.`);
   if (
     [
+      "ifrs-full:PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
+      "ifrs-full:PurchaseOfPropertyPlantAndEquipment",
       "PaymentsToAcquirePropertyPlantAndEquipment",
       "PaymentsToAcquireProductiveAssets",
       "WeightedAverageNumberOfDilutedSharesOutstanding",
@@ -165,8 +210,7 @@ function getTag(
     return missing(
       `Unexpected negative expenditure, balance or share value: ${tag}.`,
     );
-  const namespace =
-    tag === "EntityCommonStockSharesOutstanding" ? "dei" : "us-gaap";
+  const [namespace, concept] = splitTag(tag);
   return {
     value: f.val / 1e6,
     status: "reported",
@@ -184,7 +228,7 @@ function getTag(
         start: f.start,
         end: f.end,
         accession: f.accn,
-        tag: `${namespace}:${tag}`,
+        tag: `${namespace}:${concept}`,
         unit,
         retrievedAt: ctx.retrievedAt,
       },
@@ -218,22 +262,109 @@ function pick(
   if (key === "debt") return debt(ctx, end);
   const unit =
     key === "dilutedShares" || key === "periodEndShares" ? "shares" : "USD";
-  for (const tag of tags[key]) {
+  for (const tag of metricTags(ctx, key)) {
     const m = getTag(ctx, tag, instant.has(key) ? undefined : start, end, unit);
     if (m.value !== null) return m;
     if (m.reason?.startsWith("Conflicting")) return m;
   }
-  return missing(`No reliable ${key} fact for this reporting period.`);
+  if (ctx.taxonomy === "us-gaap" && key === "depreciation") {
+    let dep = getTag(ctx, "Depreciation", start, end, "USD");
+    if (dep.value === null)
+      dep = getTag(
+        ctx,
+        "DepreciationDepletionAndAmortizationPropertyPlantAndEquipment",
+        start,
+        end,
+        "USD",
+      );
+    const amort = getTag(
+      ctx,
+      "AmortizationOfIntangibleAssets",
+      start,
+      end,
+      "USD",
+    );
+    if (
+      dep.value !== null &&
+      amort.value !== null &&
+      dep.sources[0].accession === amort.sources[0].accession
+    )
+      return derived(
+        [dep, amort],
+        (v) => v[0] + v[1],
+        "D&A = separately reported depreciation/PPE depreciation and amortization + intangible amortization from the same filing; no combined total added.",
+      );
+  }
+  if (ctx.taxonomy === "us-gaap" && key === "operatingCashFlow") {
+    const continuing = getTag(
+        ctx,
+        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
+        start,
+        end,
+        "USD",
+      ),
+      discontinued = getTag(
+        ctx,
+        "NetCashProvidedByUsedInOperatingActivitiesDiscontinuedOperations",
+        start,
+        end,
+        "USD",
+      );
+    if (
+      continuing.value !== null &&
+      discontinued.value !== null &&
+      continuing.sources[0].accession === discontinued.sources[0].accession
+    )
+      return derived(
+        [continuing, discontinued],
+        (v) => v[0] + v[1],
+        "Total operating cash flow = explicitly reported continuing + discontinued components from the same filing.",
+      );
+  }
+  return missing(
+    `No reliable ${key} fact for this reporting period in ${ctx.currency} / ${ctx.taxonomy}.`,
+  );
 }
 function debt(ctx: Context, end: string): Metric {
+  if (ctx.taxonomy === "ifrs-full") {
+    const current = getTag(
+        ctx,
+        "ifrs-full:CurrentBorrowings",
+        undefined,
+        end,
+        "USD",
+      ),
+      noncurrent = getTag(
+        ctx,
+        "ifrs-full:NoncurrentBorrowings",
+        undefined,
+        end,
+        "USD",
+      );
+    if (current.sources[0]?.accession !== noncurrent.sources[0]?.accession)
+      return missing("IFRS borrowing components do not share a filing.");
+    return derived(
+      [current, noncurrent],
+      (v) => v[0] + v[1],
+      "IFRS current + noncurrent borrowings. Confirm lease and other debt coverage before modeling.",
+    );
+  }
   // Total includes finance leases; never add its component debt or leases again.
-  const aggregate = getTag(
+  let aggregate = getTag(
     ctx,
     "LongTermDebtAndFinanceLeaseObligationsIncludingCurrentPortion",
     undefined,
     end,
     "USD",
   );
+  if (aggregate.value === null)
+    aggregate = getTag(
+      ctx,
+      "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentPortion",
+      undefined,
+      end,
+      "USD",
+    );
   if (aggregate.value !== null) {
     const commercial = getTag(ctx, "CommercialPaper", undefined, end, "USD");
     const short = getTag(ctx, "ShortTermBorrowings", undefined, end, "USD");
@@ -386,8 +517,60 @@ export function normalizeFinancials(
       "Company facts and submissions identify different companies.",
     );
   if (!validDate(asOf)) throw new Error("Invalid historical snapshot date.");
-  const ctx = { facts, asOf, retrievedAt, cik };
-  const revenues = tags.revenue.flatMap((tag) => candidates(ctx, tag, "USD"));
+  // Choose one taxonomy and one currency from the latest annual revenue disclosures.
+  const bases: {
+    taxonomy: "us-gaap" | "ifrs-full";
+    currency: string;
+    end: string;
+  }[] = [];
+  for (const taxonomy of ["us-gaap", "ifrs-full"] as const) {
+    const context: Context = {
+      facts,
+      asOf,
+      retrievedAt,
+      cik,
+      taxonomy,
+      currency: "USD",
+    };
+    for (const tag of metricTags(context, "revenue")) {
+      const [ns, concept] = splitTag(tag);
+      for (const unit of Object.keys(facts.facts[ns]?.[concept]?.units ?? {}))
+        if (/^[A-Z]{3}$/.test(unit))
+          for (const f of candidates(context, tag, unit))
+            if (
+              f.start &&
+              days(f.start, f.end) >= 350 &&
+              days(f.start, f.end) <= 380 &&
+              annualForm.test(f.form)
+            )
+              bases.push({ taxonomy, currency: unit, end: f.end });
+    }
+  }
+  bases.sort(
+    (a, b) =>
+      b.end.localeCompare(a.end) ||
+      (a.taxonomy === "us-gaap" ? 0 : 1) - (b.taxonomy === "us-gaap" ? 0 : 1),
+  );
+  const basis = bases[0],
+    taxonomy =
+      basis?.taxonomy ?? (facts.facts["us-gaap"] ? "us-gaap" : "ifrs-full");
+  const currencies = new Set(
+    bases
+      .filter((b) => b.end === basis?.end && b.taxonomy === taxonomy)
+      .map((b) => b.currency),
+  );
+  const currency = currencies.size === 1 ? [...currencies][0] : null;
+  const ctx: Context = {
+    facts,
+    asOf,
+    retrievedAt,
+    cik,
+    taxonomy,
+    currency: currency ?? "UNRESOLVED",
+  };
+  const revenues = metricTags(ctx, "revenue").flatMap((tag) =>
+    candidates(ctx, tag, ctx.currency),
+  );
   const annualWindows = [
     ...new Map(
       revenues
@@ -396,7 +579,7 @@ export function normalizeFinancials(
             f.start &&
             days(f.start, f.end) >= 350 &&
             days(f.start, f.end) <= 380 &&
-            /^10-K/.test(f.form),
+            annualForm.test(f.form),
         )
         .map((f) => [f.end, { start: f.start!, end: f.end }]),
     ).values(),
@@ -424,7 +607,7 @@ export function normalizeFinancials(
         .filter(
           (f) =>
             f.start &&
-            /^10-Q/.test(f.form) &&
+            /^(10-Q|6-K)(\/A)?$/.test(f.form) &&
             f.end > last.end &&
             Math.abs(day(f.start) - day(last.end) - 1) <= 7 &&
             days(f.start, f.end) >= 70 &&
@@ -502,7 +685,7 @@ export function normalizeFinancials(
         typeof recent.filingDate[i] === "string" &&
         recent.filingDate[i] <= asOf &&
         typeof recent.form[i] === "string" &&
-        /^10-[KQ](\/A)?$/.test(recent.form[i]),
+        financialForm.test(recent.form[i]),
     )
     .sort()
     .at(-1) as string | undefined;
@@ -511,7 +694,10 @@ export function normalizeFinancials(
   for (const key of instant)
     balance[key] = pick(ctx, key, undefined, balanceEnd);
   // DEI share dates often fall after the statement date. Keep the independently reported date in provenance.
-  const shareFacts = tags.periodEndShares
+  const shareFacts = [
+    ...metricTags(ctx, "periodEndShares"),
+    "EntityCommonStockSharesOutstanding",
+  ]
     .flatMap((tag) => candidates(ctx, tag, "shares"))
     .filter((f) => !f.start)
     .sort((a, b) => b.end.localeCompare(a.end));
@@ -523,9 +709,25 @@ export function normalizeFinancials(
       shareFacts[0].end,
     );
   const warnings = [
-    "Amounts and shares are in millions; period-end common shares are not fully diluted shares.",
+    `Amounts are in millions of ${currency ?? "undetermined currency"}; shares are in millions. Period-end common shares are not fully diluted shares.`,
     "History uses the latest filed comparable values available at the snapshot date; it may include restatements. Each fact retains its own filing.",
   ];
+  if (!currency)
+    warnings.push(
+      "Reporting currency could not be determined uniquely from annual revenue. No currencies were mixed.",
+    );
+  if (annual.length < 10)
+    warnings.push(
+      `Limited historical coverage: ${annual.length} reliable annual periods available, versus a target of ten.`,
+    );
+  if (taxonomy === "ifrs-full")
+    warnings.push(
+      "IFRS concepts are normalized separately from US-GAAP; missing concepts and differing interest/lease policies require review.",
+    );
+  if (![...new Set(bases.map((b) => b.taxonomy))].every((t) => t === taxonomy))
+    warnings.push(
+      "Historical taxonomy changed; only the selected reporting basis is normalized.",
+    );
   if (!last) warnings.push("No reliable annual revenue period was found.");
   if (interim && !ttm)
     warnings.push(
@@ -555,6 +757,9 @@ export function normalizeFinancials(
   if (balance.debt.value === null)
     warnings.push(`Debt: ${balance.debt.reason}`);
   return {
+    currency,
+    currencyCandidates: [...currencies].sort(),
+    taxonomy,
     ticker,
     cik,
     name: sub.name,

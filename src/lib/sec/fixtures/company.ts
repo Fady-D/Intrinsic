@@ -108,6 +108,9 @@ export function fixture() {
       },
     };
   const sub: Submissions = {
+    sic: "3571",
+    sicDescription: "Electronic computers",
+    entityType: "operating",
     cik: String(fixtureCik),
     name: "Synthetic Fixture Co",
     fiscalYearEnd: "0630",
