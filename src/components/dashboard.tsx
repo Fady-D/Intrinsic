@@ -201,13 +201,13 @@ export default function Dashboard({
           </a>
         </nav>
         <div className="sidebar-bottom">
-          <span className="status-dot" /> Phase 3 · Research workspace
+          <span className="status-dot" /> Phase 4 · Research workspace
           <p>
             Built on fundamentals.
             <br />
             Driven by your assumptions.
           </p>
-          <span className="version">INTRINSIC / 0.3</span>
+          <span className="version">INTRINSIC / 0.4</span>
         </div>
       </aside>
       <main>
@@ -294,7 +294,11 @@ export default function Dashboard({
             </div>
             <div className="section-heading">
               <h2>Valuation at a glance</h2>
-              <span>Original scenarios · before slowdown</span>
+              <span>
+                {demo
+                  ? "Original scenarios · before slowdown"
+                  : "Estimated scenarios · before slowdown"}
+              </span>
             </div>
             <div className="summary-grid">
               <Metric
@@ -324,7 +328,7 @@ export default function Dashboard({
             </div>
             <div className="panel entry-strip">
               <div>
-                <h3>Margin-of-safety entry prices</h3>
+                <h3>Hypothetical margin-of-safety entry prices</h3>
                 <p>Based on original base-case value</p>
               </div>
               {[0.15, 0.25, 0.35, 0.5].map((m) => (
@@ -353,7 +357,7 @@ export default function Dashboard({
               <Metric
                 label="Base upside / downside"
                 value={percent(base?.upside ?? null)}
-                note="Modeled fair value versus reference price"
+                note={`Discount to estimated fair value: ${percent(base?.discountToFairValue ?? null)}`}
               />
             </div>
           </section>
@@ -362,6 +366,17 @@ export default function Dashboard({
               <h2>Three perspectives. One framework.</h2>
               <span>Each scenario is independently editable</span>
             </div>
+            {!demo && (
+              <p className="table-note">
+                Conservative bear–base estimate range:{" "}
+                {outputs[0].result
+                  ? money(outputs[0].result.valuePerShare)
+                  : "Unavailable"}{" "}
+                to {base ? money(base.valuePerShare) : "Unavailable"}. Bull
+                values reflect a more favorable scenario, not a purchase
+                recommendation.
+              </p>
+            )}
             <div className="scenario-grid">
               {outputs.map((s) => (
                 <button
@@ -428,7 +443,7 @@ export default function Dashboard({
               <div className="panel-heading">
                 <div>
                   <div className="eyebrow">
-                    {demo ? "MODEL INPUTS" : "FORECAST ESTIMATES · EDITABLE"}
+                    {demo ? "MODEL INPUTS" : "AUTOMATIC BASELINE · EDITABLE"}
                   </div>
                   <h2>{selected.label} case assumptions</h2>
                 </div>
@@ -466,6 +481,13 @@ export default function Dashboard({
                 <AssumptionInput
                   key={`${active}-${key}`}
                   {...field}
+                  hint={
+                    !demo &&
+                    selected.assumptions[key] !==
+                      defaults.find((s) => s.id === active)?.assumptions[key]
+                      ? `${field.hint ?? ""} Manual override of automatic baseline.`
+                      : field.hint
+                  }
                   value={selected.assumptions[key]}
                   onChange={(v) => change(key, v)}
                 />
@@ -478,7 +500,9 @@ export default function Dashboard({
                   setPeriod("all");
                 }}
               >
-                Reset all scenarios to defaults
+                {demo
+                  ? "Reset all scenarios to defaults"
+                  : "Reset scenarios to automatic baseline"}
               </button>
             </section>
             <div className="model-results">

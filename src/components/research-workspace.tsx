@@ -1,6 +1,7 @@
 "use client";
 import { useReducer, useRef, useState } from "react";
 import Dashboard from "./dashboard";
+import AutomaticValuation from "./automatic-valuation";
 import TickerSearch from "./ticker-search";
 import SecurityStatus from "./security-status";
 import type { SecurityIdentity } from "@/lib/securities/symbols";
@@ -8,33 +9,16 @@ import FinancialSources from "./financial-sources";
 import {
   referencePrice,
   initialLoadState,
-  initializeInputs,
-  initializeScenarios,
-  initializationIssues,
   researchReducer,
-  toDcfDataset,
-  type ModelInputs,
 } from "@/lib/data/research";
-import type { FinancialDataset, ValuationScenario } from "@/lib/finance/types";
 import type { VerifiedFinancials } from "@/lib/sec/types";
 import type { QuoteResult } from "@/lib/market/quotes";
-import { millions, money, percent } from "@/lib/format";
-const numberFields = [
-  ["excessCash", "Excess cash available to equity (USD m)"],
-  ["debt", "Total financial debt (USD m)"],
-  ["otherClaims", "Other non-equity claims (USD m)"],
-  ["shares", "Fully diluted share estimate (m)"],
-  ["depreciationRate", "D&A / revenue (%)"],
-] as const;
+import { money } from "@/lib/format";
 export default function ResearchWorkspace() {
   const [state, dispatch] = useReducer(researchReducer, initialLoadState),
     requestId = useRef(0);
   const [ticker, setTicker] = useState("MSFT"),
     [demo, setDemo] = useState(false),
-    [inputs, setInputs] = useState<ModelInputs | null>(null),
-    [model, setModel] = useState<FinancialDataset | null>(null),
-    [defaults, setDefaults] = useState<ValuationScenario[]>([]),
-    [generation, setGeneration] = useState(0),
     [quote, setQuote] = useState<QuoteResult>({ quote: null, warning: null }),
     [manualPrice, setManualPrice] = useState(""),
     [priceError, setPriceError] = useState("");
@@ -46,9 +30,6 @@ export default function ResearchWorkspace() {
     const id = ++requestId.current;
     let symbol = query.trim();
     setDemo(false);
-    setModel(null);
-    setInputs(null);
-    setDefaults([]);
     setQuote({ quote: null, warning: null });
     setManualPrice("");
     setPriceError("");
@@ -78,8 +59,6 @@ export default function ResearchWorkspace() {
       if (data.ticker !== symbol)
         throw new Error("Financial response ticker mismatch.");
       dispatch({ type: "success", id, data });
-      setInputs(initializeInputs(data));
-      setDefaults(initializeScenarios(data));
       if (data.eligibility?.eligible === false) return;
       try {
         const qr = await fetch(
@@ -120,42 +99,21 @@ export default function ResearchWorkspace() {
       : quote.quote
         ? `${quote.quote.timing} · ${quote.quote.source}`
         : "Market price unavailable";
-  const issues =
-    state.data && inputs ? initializationIssues(state.data, inputs) : [];
-  function initialize() {
-    if (!state.data || !inputs) return;
-    const dataset = toDcfDataset(state.data, inputs, price);
-    if (!dataset) return;
-    setModel(dataset);
-    setDefaults(
-      initializeScenarios(state.data).map((s) => ({
-        ...s,
-        assumptions: {
-          ...s.assumptions,
-          shares: inputs.shares!,
-          daRate: inputs.depreciationRate!,
-        },
-      })),
-    );
-    setGeneration((v) => v + 1);
-  }
   function selectDemo() {
     controller.current?.abort();
     requestId.current++;
     setDemo(true);
-    setModel(null);
-    setInputs(null);
     dispatch({ type: "start", id: requestId.current, ticker: "ASTR" });
   }
   return (
     <>
       <div
-        className={`research-container ${model || demo ? "with-model" : ""}`}
+        className={`research-container ${demo || state.data?.eligibility?.eligible ? "with-model" : ""}`}
       >
         <section className="panel research-search">
           <div className="panel-heading">
             <div>
-              <div className="eyebrow">INTRINSIC · PHASE 3</div>
+              <div className="eyebrow">INTRINSIC · PHASE 4</div>
               <h1>Research from the source.</h1>
               <p className="table-note">
                 Actual SEC financials. Explicit model estimates. No fictional
@@ -221,11 +179,14 @@ export default function ResearchWorkspace() {
               </div>
             )}
         </section>
-        {!demo && state.data && inputs && (
+        {!demo && state.data && (
           <>
             <SecurityStatus data={state.data} />
             {state.data.annual.length > 0 && (
-              <FinancialSources data={state.data} />
+              <details className="panel">
+                <summary>Reported financials and SEC filing sources</summary>
+                <FinancialSources data={state.data} />
+              </details>
             )}
             {state.data.eligibility?.eligible !== false && (
               <>
@@ -278,148 +239,6 @@ export default function ResearchWorkspace() {
                     never used automatically.
                   </p>
                 </section>
-                <section className="panel">
-                  <div className="panel-heading">
-                    <div>
-                      <div className="eyebrow">
-                        MODEL INITIALIZATION · ESTIMATES REQUIRE REVIEW
-                      </div>
-                      <h2>Complete the valuation inputs</h2>
-                    </div>
-                    <span>
-                      {state.data.ttm ? "TTM" : "Annual"} performance anchor
-                      <br />
-                      {(state.data.ttm ?? state.data.annual.at(-1))?.end ??
-                        "Unavailable"}
-                    </span>
-                  </div>
-                  <p className="table-note">
-                    Reported cash is not necessarily excess cash. Period-end
-                    common shares and diluted weighted-average shares do not
-                    establish a current fully diluted share count. Review the
-                    source table and supply justified estimates. Enter zero
-                    explicitly only when supported by your analysis.
-                  </p>
-                  <div className="manual-grid">
-                    {numberFields.map(([key, label]) => (
-                      <label className="manual-field" key={key}>
-                        {label}
-                        <input
-                          type="number"
-                          aria-label={label}
-                          min={0}
-                          step="any"
-                          value={
-                            inputs[key] === null
-                              ? ""
-                              : key === "depreciationRate"
-                                ? Number((inputs[key]! * 100).toFixed(4))
-                                : inputs[key]!
-                          }
-                          onChange={(e) => {
-                            const value =
-                              e.target.value === ""
-                                ? null
-                                : Number(e.target.value) /
-                                  (key === "depreciationRate" ? 100 : 1);
-                            setInputs({ ...inputs, [key]: value });
-                          }}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <p className="table-note">
-                    Reported cash:{" "}
-                    {state.data.latestBalance.metrics.cash.value === null
-                      ? "missing"
-                      : millions(state.data.latestBalance.metrics.cash.value)}
-                    m · Short-term investments:{" "}
-                    {state.data.latestBalance.metrics.shortInvestments.value ===
-                    null
-                      ? "missing"
-                      : millions(
-                          state.data.latestBalance.metrics.shortInvestments
-                            .value,
-                        )}
-                    m · Annual/TTM diluted average shares:{" "}
-                    {millions(
-                      (state.data.ttm ?? state.data.annual.at(-1))?.metrics
-                        .dilutedShares.value ?? NaN,
-                    )}
-                    m. These are source references, not automatically inferred
-                    equity adjustments.
-                  </p>
-                  <p className="table-note">
-                    Year 1 and terminal margins initialize to reported operating
-                    income / revenue. CapEx and D&A use the selected reported
-                    ratios where available. Base forward growth initializes to
-                    comparable annual revenue growth, bounded to −20% to +30% as
-                    a starting estimate, with bear/bull adjustments and
-                    later-year fade. If comparable history is absent,
-                    illustrative scenario growth defaults are explicitly
-                    estimates requiring review. 25% cash tax, 10% NWC
-                    investment, WACC, terminal growth, margin of safety, and
-                    scenario spreads are editable{" "}
-                    <strong>model estimates</strong>, not SEC facts. The D&A
-                    concept may include depletion or exclude intangible
-                    amortization; review its tag and override when needed.
-                  </p>
-                  <p className="table-note">
-                    Initial growth (bear/base/bull, years 1–3):{" "}
-                    {defaults
-                      .map((s) => percent(s.assumptions.growthEarly))
-                      .join(" / ")}
-                    . Use the preserved scenario editor below after
-                    initialization.
-                  </p>
-                  <label className="manual-field">
-                    Estimate rationale and source notes
-                    <textarea
-                      aria-label="Estimate rationale"
-                      value={inputs.rationale}
-                      onChange={(e) =>
-                        setInputs({ ...inputs, rationale: e.target.value })
-                      }
-                      placeholder="Explain excess cash, debt coverage, claims, share estimate and forecast assumptions."
-                    />
-                  </label>
-                  <label className="acknowledgement">
-                    <input
-                      type="checkbox"
-                      checked={inputs.acknowledged}
-                      onChange={(e) =>
-                        setInputs({ ...inputs, acknowledged: e.target.checked })
-                      }
-                    />
-                    I confirm this is ordinary company equity, reviewed the
-                    reported concepts and accept these manual inputs and
-                    forecast defaults as model estimates.
-                  </label>
-                  {issues.length > 0 && (
-                    <div className="alert">
-                      <strong>Valuation incomplete</strong>
-                      <ul>
-                        {issues.map((i) => (
-                          <li key={i}>{i}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={issues.length > 0}
-                    onClick={initialize}
-                  >
-                    Initialize / reinitialize DCF
-                  </button>
-                  <p className="table-note">
-                    Reinitializing resets all company scenarios to these inputs.
-                    Forecast years are annual steps from the displayed
-                    reporting-period anchor, not a claim of calendar-year
-                    actuals. No live valuation is labeled fully verified.
-                  </p>
-                </section>
               </>
             )}
           </>
@@ -427,22 +246,15 @@ export default function ResearchWorkspace() {
       </div>
       {demo ? (
         <Dashboard key="fictional-demo" />
-      ) : model ? (
-        <Dashboard
-          key={`${state.ticker}-${generation}`}
-          data={{
-            ...model,
-            market: {
-              ...model.market,
-              price: price ?? 0,
-              asOf:
-                manualPrice.trim() !== ""
-                  ? "manually entered"
-                  : (quote.quote?.asOf ?? "unavailable"),
-            },
-          }}
-          defaults={defaults}
+      ) : state.data?.eligibility?.eligible !== false && state.data ? (
+        <AutomaticValuation
+          key={state.data.ticker}
+          data={state.data}
+          price={price}
           priceLabel={priceLabel}
+          verifiedQuotePrice={
+            quote.quote && !quote.quote.stale ? quote.quote.price : null
+          }
         />
       ) : (
         <div className="research-empty">
@@ -451,7 +263,7 @@ export default function ResearchWorkspace() {
               ? "Loading company-specific financial data…"
               : state.data?.eligibility?.eligible === false
                 ? state.data.eligibility.reason
-                : "The DCF workspace opens after the required company inputs are complete. No prior-company or fictional financials are substituted."}
+                : "Load an operating company to generate its automatic baseline. No prior-company or fictional financials are substituted."}
           </p>
         </div>
       )}

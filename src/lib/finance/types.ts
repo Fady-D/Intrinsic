@@ -89,6 +89,7 @@ export interface DcfResult {
   entryPrice: number;
   upside: number | null;
   terminalWeight: number | null;
+  discountToFairValue: number | null;
   excessCash: number;
   debt: number;
   otherClaims: number;

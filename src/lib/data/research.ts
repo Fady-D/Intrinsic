@@ -4,6 +4,7 @@ import { createScenarios } from "./illustrative";
 import type { Quote } from "../market/quotes";
 import { comparable } from "../sec/normalize";
 export interface ModelInputs {
+  automatic?: boolean;
   excessCash: number | null;
   debt: number | null;
   otherClaims: number | null;
@@ -95,7 +96,7 @@ export function initializationIssues(
       "The existing DCF requires a consistently reported USD financial dataset. No currency conversion is assumed.",
     );
   for (const key of ["revenue", "operatingIncome", "capex"] as const)
-    if (p?.metrics[key].value == null)
+    if (p?.metrics[key].value == null && !(inputs.automatic && key === "capex"))
       issues.push(`Missing reliable ${key} for the model's reporting period.`);
   if (data.interim && !data.ttm)
     issues.push(
@@ -123,7 +124,7 @@ export function initializationIssues(
       );
   if (inputs.depreciationRate !== null && inputs.depreciationRate > 1)
     issues.push("D&A / revenue must not exceed 100%.");
-  if (!inputs.acknowledged || !inputs.rationale.trim())
+  if (!inputs.automatic && (!inputs.acknowledged || !inputs.rationale.trim()))
     issues.push(
       "Document and acknowledge the manual inputs and forecast estimates.",
     );

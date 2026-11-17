@@ -181,6 +181,10 @@ export function calculateDcf(
     entryPrice: entryPrice(valuePerShare, a.marginOfSafety),
     upside:
       data.market.price > 0 ? valuePerShare / data.market.price - 1 : null,
+    discountToFairValue:
+      data.market.price > 0 && valuePerShare > 0
+        ? 1 - data.market.price / valuePerShare
+        : null,
     terminalWeight:
       enterpriseValue !== 0 ? pvTerminalValue / enterpriseValue : null,
     excessCash: balance.excessCash,

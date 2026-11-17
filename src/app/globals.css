@@ -1437,3 +1437,10 @@ footer {
     max-height: 300px;
   }
 }
+
+.evidence-reason {
+  white-space: normal;
+  min-width: 260px;
+  text-align: left;
+  color: var(--muted);
+}

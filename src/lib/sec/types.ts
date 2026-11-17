@@ -16,6 +16,19 @@ export type MetricKey =
   | "shortInvestments"
   | "debt"
   | "periodEndShares"
+  | "currentAssets"
+  | "currentLiabilities"
+  | "receivables"
+  | "inventory"
+  | "payables"
+  | "bookEquity"
+  | "currentDebt"
+  | "noncurrentDebt"
+  | "taxExpense"
+  | "pretaxIncome"
+  | "interestExpense"
+  | "preferredClaims"
+  | "minorityClaims"
   | "reportedFcf";
 export interface Provenance {
   source: "SEC EDGAR";

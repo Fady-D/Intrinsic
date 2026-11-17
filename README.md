@@ -1,6 +1,6 @@
 # Intrinsic
 
-A personal stock valuation workspace with actual SEC EDGAR financials, explicit model estimates, independent scenarios and an interactive unlevered DCF engine. Phase 3 removes the five-ticker restriction and adds dynamic SEC directory search, listing/share-class identity, issuer classification and foundational foreign-reporting support. The existing scenario editor, slowdown simulator, five charts and DCF equations are preserved.
+A personal stock valuation workspace with actual SEC EDGAR financials, explicit model estimates, independent scenarios and an interactive unlevered DCF engine. Phase 4 adds automatic fundamental forecasts and transparent WACC estimation. Phase 3 removes the five-ticker restriction and adds dynamic SEC directory search, listing/share-class identity, issuer classification and foundational foreign-reporting support. The existing scenario editor, slowdown simulator, five charts and DCF equations are preserved.
 
 ## Run locally
 
@@ -25,7 +25,7 @@ Open [localhost:3000](http://localhost:3000). Search **any listing in the offici
 2. Review annual, YTD, quarter and TTM columns, source details, data coverage and warnings. Financial source amounts use millions of the identified reporting currency; shares use millions. The existing DCF and reference-price interface use USD only. Banks, insurers, funds, non-operating securities, unclassified issuers, and incompatible/undetermined currency cases do not receive an operating-company fair value.
 3. Enter a manual USD share price, or optionally configure a free Alpha Vantage key as `QUOTE_API_KEY`. Quotes from this adapter are **previous-close**, never live. Stale quotes are displayed but not used automatically. A manual override is clearly labeled; price can remain unavailable, in which case upside/downside is unavailable.
 4. Supply justified **excess cash, other claims and a fully diluted share estimate**. These cannot be reliably inferred from reported cash or weighted-average shares. Debt and D&A are prefilled only where the selected concepts provide coverage; otherwise input is required. Missing critical revenue, operating income, CapEx or irreconcilable interim periods block valuation.
-5. Document the manual estimates, review the assumptions, acknowledge them, and choose **Initialize / reinitialize DCF**. No valuation is described as fully verified.
+5. The automatic baseline now fills supported estimates without an acknowledgment screen. Supply only material unresolved inputs (especially debt, preferred/minority claims or D&A). Valuations and independent scenarios appear immediately once sufficient inputs exist; no valuation is described as fully verified.
 6. Edit bear/base/bull assumptions or apply growth slowdown as in Phase 1. Changing the reference price updates upside/downside. Loading or refreshing a company clears the prior model and initializes new company-specific inputs. Reinitializing explicitly resets the scenarios; refreshing the browser does not persist research state.
 
 ## Checks
@@ -118,3 +118,15 @@ The official directory is [company_tickers_exchange.json](https://www.sec.gov/fi
 Classification uses SEC SIC, entity type, filing forms, explicit fund/trust descriptions and identifiable instrument suffixes. It is conservative and is not a complete security master. Missing SIC blocks automatic model selection. Unmarked derivatives or preferred instruments may not be identifiable from this directory alone; users must confirm ordinary equity and share/ADR units before valuation. Current or historical filing metadata can change classifications. Historical transition years or unusual model ratios may still fall outside the Phase 1 engine's validation bounds and require separate review.
 
 Live QQQ lookup currently finds no exact SEC-directory entry, and therefore returns a coverage error without substituting QQQX. TSM's annual revenue contains both TWD and USD units; this implementation does not guess the primary/convenience currency. SAP financials display in EUR, and SHOP disclosed nine available annual periods in the executed checks. These are documented limits, not silently successful USD valuations.
+
+## Phase 4 automatic valuation
+
+Load an operating-company ticker. The automatic panel derives 3/5/10-year revenue CAGRs when enough comparable history exists, recent growth, variability-adjusted growth fade, normalized margins, effective-tax proxies, D&A/CapEx intensity and trade working-capital investment. Up to eleven annual observations permit a true ten-year CAGR. Every rule and its estimate/reporting status is visible under evidence.
+
+The WACC panel retrieves the official US Treasury 10-year par yield without an API key. A missing/stale observation stays missing. Beta 1, ERP 5% and a 2% credit spread are explicit editable policy estimates, not measured beta/current ERP/borrowing yields. Capital weights prefer an available non-stale quote times the diluted-share proxy; otherwise book equity is a disclosed proxy. A direct WACC override is available. Hypothetical reference prices affect upside/discount comparisons, not observed market capitalization.
+
+Excess cash uses a 5%-of-revenue liquidity reserve plus available short-term investments; shares use the maximum of reported current common shares and diluted weighted averages. Both are estimates. Complete debt and preferred/minority claims are not inferred from absent disclosures. Incomplete cases identify the fields requiring review; entered zero is a manual assumption, not a verified absence. SBC remains in operating expenses with no second add-back/dilution deduction.
+
+Status distinguishes Estimated, Provisional and Incomplete. Current beta/credit/capital-weight and trade-NWC proxies make typical automatic cases **Provisional**; material gaps remain **Incomplete**. The initial four live checks (MSFT, GOOGL, NVDA, WDC) derived distinct forecasts but all retained unresolved claims; some also required debt or D&A input. No values were supplied to force successful live valuations.
+
+Reset returns to the automatically derived baseline. Scenario changes are labeled manual overrides; editing top-level financial/WACC inputs regenerates scenario baselines. Existing sliders, slowdown, charts, scenario comparisons and 15/25/35/50% hypothetical entry prices remain. Discount to fair value uses 1 − price/fair value, distinct from upside relative to price.

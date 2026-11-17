@@ -38,6 +38,25 @@ export const tags = {
     "EntityCommonStockSharesOutstanding",
     "CommonStockSharesOutstanding",
   ],
+  currentAssets: ["AssetsCurrent"],
+  currentLiabilities: ["LiabilitiesCurrent"],
+  receivables: ["AccountsReceivableNetCurrent"],
+  inventory: ["InventoryNet"],
+  payables: ["AccountsPayableCurrent"],
+  bookEquity: ["StockholdersEquity"],
+  currentDebt: ["DebtCurrent"],
+  noncurrentDebt: ["LongTermDebtNoncurrent"],
+  taxExpense: ["IncomeTaxExpenseBenefit"],
+  pretaxIncome: [
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+  ],
+  interestExpense: ["InterestExpense"],
+  preferredClaims: [
+    "PreferredStockValueOutstanding",
+    "PreferredStockValue",
+    "ConvertiblePreferredStockNonredeemableOrRedeemableIssuerOptionValue",
+  ],
+  minorityClaims: ["MinorityInterest"],
   reportedFcf: [],
 } satisfies Record<MetricKey, string[]>;
 // IFRS concepts stay in their own taxonomy and reporting currency. Broad financial-asset
@@ -61,6 +80,19 @@ export const ifrsTags: Record<MetricKey, string[]> = {
   shortInvestments: [],
   debt: ["CurrentBorrowings", "NoncurrentBorrowings"],
   periodEndShares: ["NumberOfSharesOutstanding"],
+  currentAssets: [],
+  currentLiabilities: [],
+  receivables: [],
+  inventory: [],
+  payables: [],
+  bookEquity: [],
+  currentDebt: [],
+  noncurrentDebt: [],
+  taxExpense: [],
+  pretaxIncome: [],
+  interestExpense: [],
+  preferredClaims: [],
+  minorityClaims: [],
   reportedFcf: [],
 };
 const annualForm = /^(10-K|20-F|40-F)(\/A)?$/;
@@ -100,6 +132,16 @@ const instant = new Set<MetricKey>([
   "shortInvestments",
   "debt",
   "periodEndShares",
+  "currentAssets",
+  "currentLiabilities",
+  "receivables",
+  "inventory",
+  "payables",
+  "bookEquity",
+  "currentDebt",
+  "noncurrentDebt",
+  "preferredClaims",
+  "minorityClaims",
 ]);
 const validDate = (s: unknown): s is string =>
   typeof s === "string" &&
@@ -349,6 +391,18 @@ function debt(ctx: Context, end: string): Metric {
       "IFRS current + noncurrent borrowings. Confirm lease and other debt coverage before modeling.",
     );
   }
+  const current = getTag(ctx, "DebtCurrent", undefined, end, "USD"),
+    noncurrent = getTag(ctx, "LongTermDebtNoncurrent", undefined, end, "USD");
+  if (
+    current.value !== null &&
+    noncurrent.value !== null &&
+    current.sources[0].accession === noncurrent.sources[0].accession
+  )
+    return derived(
+      [current, noncurrent],
+      (v) => v[0] + v[1],
+      "Explicit total current debt + noncurrent long-term debt; no separate current maturities or commercial paper added.",
+    );
   // Total includes finance leases; never add its component debt or leases again.
   let aggregate = getTag(
     ctx,
@@ -585,7 +639,7 @@ export function normalizeFinancials(
     ).values(),
   ]
     .sort((a, b) => a.end.localeCompare(b.end))
-    .slice(-10);
+    .slice(-11);
   const annual = annualWindows.map((w) =>
     period(ctx, "annual", w.start, w.end),
   );
