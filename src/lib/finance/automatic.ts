@@ -1,3 +1,4 @@
+import { investmentProfile } from "./investment";
 import { assumptionErrors } from "./validation";
 import { capexProfile } from "./capex";
 import type {
@@ -187,10 +188,11 @@ export function buildAutomaticBaseline(
     normalMargin === null
       ? startMargin
       : 0.7 * normalMargin + 0.3 * startMargin;
-  const historicalDa = median(values("depreciation")),
+  const advanced = investmentProfile(data),
+    historicalDa = median(values("depreciation")),
     daPeriod = data.ttm?.metrics.depreciation.value != null ? data.ttm : data.interim,
-    da = historicalDa ?? (daPeriod ? ratio(daPeriod, "depreciation") : null),
-    profile = capexProfile(data),
+    da = advanced?.nearDa ?? historicalDa ?? (daPeriod ? ratio(daPeriod, "depreciation") : null),
+    profile = advanced ?? capexProfile(data),
     annualCapex = median(values("capex")),
     capex = profile?.normal ?? annualCapex ?? (p ? ratio(p,"capex") : null) ?? (data.interim ? ratio(data.interim,"capex") : null);
   const taxSamples = recent.flatMap((a) => {
@@ -277,7 +279,7 @@ export function buildAutomaticBaseline(
   const shares = basis?.shares.value != null
     ? Math.max(basis.shares.value, balance.periodEndShares.value ?? 0)
     : shareFacts.length ? Math.max(...shareFacts) : null;
-  note("D&A / revenue", da, "calculated", historicalDa !== null
+  note("D&A / revenue", da, "calculated", advanced?.nearDa!=null ? "Starting D&A intensity uses the latest complete reported period; future normalized depreciation and its EBIT effect are disclosed in the investment policy." : historicalDa !== null
     ? "Median of available annual D&A/revenue ratios over the last three years."
     : daPeriod ? `Complete ${daPeriod.kind} D&A divided by revenue for ${daPeriod.start} – ${daPeriod.end}; used as a forecast intensity proxy. No missing annual component was invented.`
     : "Complete comparable D&A disclosures unavailable.");
@@ -404,10 +406,12 @@ export function buildAutomaticBaseline(
     initialMargin: startMargin,
     targetMargin: target,
     taxRate,
-    daRate: inputs.depreciationRate ?? NaN,
+    daRate: overrides.financial?.depreciationRate !== undefined ? inputs.depreciationRate ?? NaN : advanced?.longDa ?? inputs.depreciationRate ?? NaN,
+    ...(advanced ? {capexHoldYears:advanced.hold,capexNormalizationYears:advanced.end,capexCurve:advanced.curve,
+      ...(advanced.nearDa!==null && overrides.financial?.depreciationRate===undefined ? {daNearRate:advanced.nearDa}: {})} : {}),
     ...(profile ? { capexNearRate: profile.near } : {}),
     capexRate:
-      capex === null ? NaN : Math.max(capex, inputs.depreciationRate ?? 0),
+      capex === null ? NaN : advanced ? capex : Math.max(capex, inputs.depreciationRate ?? 0),
     nwcRate,
     wacc,
     terminalGrowth: Number.isFinite(wacc)
@@ -434,6 +438,7 @@ export function buildAutomaticBaseline(
       (Math.max(...margins) - Math.min(...margins)) * 0.25 || 0.02,
     ),
     growthSpread = Math.max(0.02, Math.abs(assumptions.growthEarly) * 0.25);
+  const intensitySpread=advanced?Math.min(.05,advanced.capitalSpread/4):.01;
   const scenarios: ValuationScenario[] = [
     {
       id: "bear",
@@ -444,7 +449,8 @@ export function buildAutomaticBaseline(
         growthMiddle: assumptions.growthMiddle - growthSpread * 0.6,
         growthLate: assumptions.growthLate - growthSpread * 0.25,
         targetMargin: assumptions.targetMargin - Math.min(marginSpread, Math.max(0, assumptions.targetMargin+1)),
-        capexRate: assumptions.capexRate + Math.min(.01, Math.max(0,1-assumptions.capexRate)),
+        capexRate: assumptions.capexRate + Math.min(intensitySpread, Math.max(0,1-assumptions.capexRate)),
+        ...(advanced ? {capexNormalizationYears:Math.min(10,(assumptions.capexNormalizationYears??advanced.end)+1),capexCurve:Math.min(4,(assumptions.capexCurve??advanced.curve)+.25)} : {}),
         wacc: assumptions.wacc + 0.015,
       },
     },
@@ -458,7 +464,8 @@ export function buildAutomaticBaseline(
         growthMiddle: assumptions.growthMiddle + growthSpread * 0.6,
         growthLate: assumptions.growthLate + growthSpread * 0.25,
         targetMargin: assumptions.targetMargin + Math.min(marginSpread, Math.max(0,1-assumptions.targetMargin)),
-        capexRate: assumptions.capexRate + Math.min(assumptions.capexRate*growthSpread, Math.max(0,1-assumptions.capexRate)),
+        capexRate: advanced ? Math.max(0,assumptions.capexRate-intensitySpread) : assumptions.capexRate + Math.min(assumptions.capexRate*growthSpread, Math.max(0,1-assumptions.capexRate)),
+        ...(advanced ? {capexCurve:Math.max(.1,(assumptions.capexCurve??advanced.curve)-.25)} : {}),
         wacc: Math.max(
           assumptions.terminalGrowth + 0.015,
           assumptions.wacc - 0.005,
@@ -466,7 +473,8 @@ export function buildAutomaticBaseline(
       },
     },
   ];
-  const dataset = toDcfDataset(data, inputs, price);
+  const rawDataset = toDcfDataset(data, inputs, price);
+  const dataset = rawDataset ? {...rawDataset,salesToCapital:advanced?.salesToCapital ?? undefined} : null;
   if(!dataset) {
     const missing=initializationIssues(data,inputs);
     issues.push(...missing);
@@ -486,15 +494,15 @@ export function buildAutomaticBaseline(
     "70% five-year median operating margin + 30% current annual/TTM margin. Bear/bull vary growth, margin, reinvestment and discount inputs through the full DCF.",
   );
   note(
-    "Capital expenditure intensity",
+    "Long-term cash CapEx intensity",
     assumptions.capexRate,
     "estimated",
-    profile?.reason ?? (annualCapex === null ? "CapEx intensity uses a complete current performance or interim CapEx/revenue ratio because annual history is unavailable. This is a forecast proxy, subject to interim seasonality, with a floor at modeled D&A." : "Three-year median CapEx/revenue with a floor at modeled D&A intensity; insufficient comparable disclosures for a separate near-term normalization profile."),
+    (advanced?.explanation ?? (profile && "reason" in profile ? profile.reason : undefined)) ?? (annualCapex === null ? "CapEx intensity uses a complete current performance or interim CapEx/revenue ratio because annual history is unavailable. This is a forecast proxy, subject to interim seasonality, with a floor at modeled D&A." : "Three-year median CapEx/revenue with a floor at modeled D&A intensity; insufficient comparable disclosures for a separate near-term normalization profile."),
   );
   warnings.push(
     "Debt/claim adjustments and shares must use the same conversion basis; review convertible debt before treating a weighted-average diluted-share proxy as current dilution. SBC remains an operating expense: it is not added back to FCFF, and a second dilution/SBC deduction is not imposed. Share count stays constant after the disclosed starting proxy.",
   );
-  warnings.push(profile?.reason ?? "Separate near-term CapEx normalization unavailable; existing flat investment method retained. Review current spending before using annual forecasts.");
+  warnings.push(advanced ? `${advanced.explanation} ${advanced.depreciationExplanation} ${advanced.limitation}` : (profile && "reason" in profile ? profile.reason : undefined) ?? "Separate near-term CapEx normalization unavailable; existing flat investment method retained. Review current spending before using annual forecasts.");
   const materialEstimate =
     warnings.length > 0 ||
     Object.keys(overrides.financial ?? {}).length > 0 ||

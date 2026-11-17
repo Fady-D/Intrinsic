@@ -61,6 +61,13 @@ export interface FinancialDataset {
 }
 export interface Assumptions {
   annualGrowth?: number[];
+  annualCapex?: (number | null)[];
+  capexHoldYears?: number;
+  capexNormalizationYears?: number;
+  capexCurve?: number;
+  daNearRate?: number;
+  financeLeaseInvestmentRate?: number;
+  financeLeaseYtdAdditions?: number;
   growthEarly: number;
   growthMiddle: number;
   growthLate: number;
@@ -91,6 +98,8 @@ export interface ForecastYear {
   nopat: number;
   depreciation: number;
   capex: number;
+  cashCapex?: number;
+  leaseAssetAdditions?: number;
   changeInNwc: number;
   fcff: number;
   discountFactor: number;

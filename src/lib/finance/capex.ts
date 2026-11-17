@@ -15,6 +15,6 @@ export function capexProfile(data: VerifiedFinancials) {
   if(!Number.isFinite(near) || !Number.isFinite(normal) || near>1 || normal>1) return null;
   return { near, normal, reason: `Near-term CapEx/revenue ${(near*100).toFixed(2)}% uses ${latest.kind} disclosures for ${latest.start} – ${latest.end}. Long-term ${(normal*100).toFixed(2)}% is the arithmetic mean of the last three completed annual ratios (${annual.map(p=>p.end).join(", ")}). Hold the near-term ratio in forecast years 1–2, then interpolate to the long-term ratio by year 6; use the long-term ratio for terminal cash flow. These are editable estimates, with no assumption that recent elevated spending persists forever. Interim seasonality and structural investment changes require review.` };
 }
-export function projectedCapexRate(longTerm: number, nearTerm: number | undefined, period: number) {
-  return nearTerm === undefined ? longTerm : nearTerm+(longTerm-nearTerm)*Math.min(1,Math.max(0,(period-2)/4));
+export function projectedCapexRate(longTerm: number, nearTerm: number | undefined, period: number, end = 6, hold = 2, curve = 1) {
+  return nearTerm === undefined ? longTerm : nearTerm+(longTerm-nearTerm)*Math.min(1,Math.max(0,(period-hold)/(end-hold)))**curve;
 }

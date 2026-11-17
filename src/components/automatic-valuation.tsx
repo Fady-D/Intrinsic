@@ -324,7 +324,7 @@ export default function AutomaticValuation({
                   "nwcRate",
                   "terminalGrowth",
                   "marginOfSafety",
-                ] as Exclude<keyof Assumptions, "annualGrowth">[]
+                ] as Exclude<keyof Assumptions, "annualGrowth" | "annualCapex">[]
               ).map((key) =>
                 input(
                   `${({ growthEarly: "Revenue growth · years 1–3", growthMiddle: "Revenue growth · years 4–5", growthLate: "Revenue growth · years 6–10", initialMargin: "Year 1 operating margin", targetMargin: "Target operating margin", taxRate: "Cash tax rate", capexRate: "CapEx / revenue", nwcRate: "NWC / incremental revenue", terminalGrowth: "Terminal growth", marginOfSafety: "Margin of safety" } as Partial<Record<keyof Assumptions, string>>)[key]} (%) · manual override`,
@@ -348,7 +348,7 @@ export default function AutomaticValuation({
           key={data.ticker}
           data={{
             ...(fiscal?.dataset ?? b.dataset ?? historical.dataset!),
-            salesToCapital: forward?.salesToCapital,
+            salesToCapital: forward?.salesToCapital ?? (fiscal?.dataset ?? b.dataset ?? historical.dataset)?.salesToCapital,
             market: {
               ...(b.dataset ?? historical.dataset)!.market,
               price: price ?? 0,

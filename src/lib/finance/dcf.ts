@@ -104,7 +104,7 @@ export function applySlowdown(
 export function updateScenario(
   scenarios: ValuationScenario[],
   id: string,
-  key: Exclude<keyof Assumptions, "annualGrowth">,
+  key: Exclude<keyof Assumptions, "annualGrowth" | "annualCapex">,
   value: number,
 ): ValuationScenario[] {
   return scenarios.map((s) =>
@@ -130,6 +130,8 @@ export function calculateDcf(
   for(const [key,label] of [["excessCash","Excess cash"],["debt","Financial debt"],["otherClaims","Non-equity claims"]] as const)
     if(!Number.isFinite(balance[key]) || balance[key]<0) throw new Error(`${label} is unavailable or invalid; enter a reviewed nonnegative value.`);
   const fiscal = data.fiscalForecast;
+  if(fiscal?.elapsedActuals && (a.financeLeaseInvestmentRate??0)>0 && a.financeLeaseYtdAdditions===undefined)
+    throw new Error("Enter reviewed YTD finance-lease asset additions to reconcile the annual lease-inclusive forecast; past asset additions cannot be counted as future investment.");
   if(fiscal?.elapsedActuals) for(const [key,v] of Object.entries(fiscal.elapsedActuals))
     if(!Number.isFinite(v) || (["revenue","depreciation","capex"].includes(key) && v<0))
       throw new Error(`Reported YTD ${key} is invalid; review the fiscal-year reconciliation.`);
@@ -152,26 +154,34 @@ export function calculateDcf(
   ): ForecastYear => {
     const previousRevenue = revenue;
     revenue *= 1 + growth;
-    const ebit = revenue * margin,
+    const daProgress=Math.min(1,Math.max(0,(period-2)/((a.capexNormalizationYears??6)-2)));
+    const daRatio=a.daNearRate===undefined?a.daRate:a.daNearRate+(a.daRate-a.daNearRate)*daProgress;
+    const effectiveMargin=margin-(a.daNearRate===undefined?0:daRatio-a.daNearRate);
+    if(effectiveMargin < -1 || effectiveMargin > 1) throw new Error("D&A-adjusted operating margin is outside −100%/+100%; review D&A and margin assumptions.");
+    const ebit = revenue * effectiveMargin,
       cashTaxes = ebit * a.taxRate;
-    const depreciation = revenue * a.daRate,
+    const depreciation = revenue * daRatio,
       changeInNwc = (revenue - previousRevenue) * a.nwcRate;
     if (data.salesToCapital !== undefined && (!Number.isFinite(data.salesToCapital) || data.salesToCapital <= 0))
       throw new Error("Sales-to-capital must be positive and finite.");
     const required = data.salesToCapital ? Math.max(0, revenue - previousRevenue) / data.salesToCapital : null;
     // A floor on TOTAL reinvestment, not an additional charge on top of CapEx/NWC.
-    const plannedCapex = revenue * projectedCapexRate(a.capexRate, a.capexNearRate, period);
+    const plannedCapex = revenue * ((period<=10 ? a.annualCapex?.[period-1] : undefined) ?? projectedCapexRate(a.capexRate, a.capexNearRate, period,a.capexNormalizationYears,a.capexHoldYears,a.capexCurve));
     // An annual forecast cannot spend less than reported YTD. Only the new profile
     // applies this explicit floor; legacy flat-rate inputs retain their validation.
     const reportedFloor = a.capexNearRate !== undefined && period === 1 ? fiscal?.elapsedActuals?.capex ?? 0 : 0;
-    const capex = Math.max(plannedCapex, reportedFloor,
-      required === null ? plannedCapex : depreciation + required - changeInNwc);
+    // Unknown lease additions remain an explicit scope limitation, never a reported zero.
+    const leaseAssetAdditions=a.financeLeaseInvestmentRate===undefined?undefined:revenue*a.financeLeaseInvestmentRate;
+    const cashCapex = Math.max(plannedCapex, reportedFloor,
+      required === null ? plannedCapex : depreciation + required - changeInNwc - (leaseAssetAdditions??0));
+    const capex=cashCapex+(leaseAssetAdditions??0);
     if (
       period === 1 &&
       fiscal?.elapsedActuals &&
       (revenue < fiscal.elapsedActuals.revenue ||
         depreciation < fiscal.elapsedActuals.depreciation ||
-        capex < fiscal.elapsedActuals.capex)
+        cashCapex < fiscal.elapsedActuals.capex ||
+        (leaseAssetAdditions!==undefined && leaseAssetAdditions < (a.financeLeaseYtdAdditions??0)))
     )
       throw new Error(
         "Full-fiscal-year revenue, D&A or CapEx is below the amount already reported YTD. Review the revenue profile and reinvestment assumptions.",
@@ -191,7 +201,7 @@ export function calculateDcf(
             fiscal.elapsedActuals.ebit,
             a.taxRate,
             fiscal.elapsedActuals.depreciation,
-            fiscal.elapsedActuals.capex,
+            fiscal.elapsedActuals.capex + ((a.financeLeaseInvestmentRate??0)>0 ? a.financeLeaseYtdAdditions??0 : 0),
             fiscal.elapsedActuals.changeInNwc,
           )
         : 0;
@@ -204,12 +214,14 @@ export function calculateDcf(
       period,
       growth,
       revenue,
-      margin,
+      margin: effectiveMargin,
       ebit,
       cashTaxes,
       nopat: ebit - cashTaxes,
       depreciation,
       capex,
+      cashCapex,
+      ...(leaseAssetAdditions!==undefined?{leaseAssetAdditions}:{}),
       changeInNwc,
       fcff: cashFlow,
       discountFactor: 1 / (1 + a.wacc) ** discountPeriod,

@@ -1,0 +1,51 @@
+import{it,expect}from"vitest";
+import{investmentProfile}from"./investment";
+import{projectedCapexRate}from"./capex";
+import{calculateDcf}from"./dcf";
+import{defaultAssumptions,illustrativeData}from"../data/illustrative";
+import{fixture}from"../sec/fixtures/company";
+import{normalizeFinancials}from"../sec/normalize";
+import{buildAutomaticBaseline}from"./automatic";
+const company=()=>{
+ const{facts,sub}=fixture(), d=normalizeFinancials(facts,sub,"TEST","2025-11-15T00:00:00Z"), template=d.annual.at(-1)!;
+ d.annual=Array.from({length:5},(_,i)=>{const p=structuredClone(template);p.start=`${2020+i}-07-01`;p.end=`${2021+i}-06-30`;p.metrics.revenue.value=1000*1.1**i;p.metrics.capex.value=p.metrics.revenue.value*[.1,.11,.12,.18,.3][i];p.metrics.depreciation.value=p.metrics.revenue.value*[.05,.055,.06,.07,.08][i];return p;});
+ d.ttm=null;d.interim!.metrics.revenue.value=300;d.interim!.metrics.capex.value=105;d.interim!.metrics.depreciation.value=27;return d;
+};
+it("uses five-year structural intensity evidence, preserves missing D&A and gives capital scenarios independent forecasts",()=>{
+ const d=company(), p=investmentProfile(d)!;
+ expect(p.normal).toBeCloseTo(.3);expect(p.hold).toBe(4);expect(p.end).toBe(10);
+ expect(p.longDa).toBeGreaterThan(p.nearDa!);expect(p.depreciationExplanation).toContain("not asset cohorts");
+ const b=buildAutomaticBaseline(d,null,{directWacc:.1,financial:{otherClaims:0},assumptions:{nwcRate:.1}});
+ expect(b.scenarios[0].assumptions.capexRate).toBeGreaterThan(b.scenarios[1].assumptions.capexRate);
+ expect(b.scenarios[2].assumptions.capexRate).toBeLessThan(b.scenarios[1].assumptions.capexRate);
+ d.annual.forEach(p=>p.metrics.depreciation.value=null);
+ const fallback=investmentProfile(d)!;expect(fallback.nearDa).toBeCloseTo(.09);expect(fallback.longDa).toBeCloseTo(.09);expect(fallback.depreciationExplanation).toContain("trend unavailable");
+});
+it("lags D&A, adjusts EBIT before adding depreciation back, and limits the standalone benefit to its tax shield",()=>{
+ const a={...defaultAssumptions,annualGrowth:Array(10).fill(0),initialMargin:.2,targetMargin:.2,daNearRate:.04,daRate:.08,capexRate:.1,capexNormalizationYears:6,nwcRate:0};
+ const r=calculateDcf(illustrativeData,a);
+ expect(r.forecast[0].depreciation).toBe(40);expect(r.forecast[1].depreciation).toBe(40);expect(r.forecast[5].depreciation).toBe(80);
+ expect(r.forecast[0].ebit+r.forecast[0].depreciation).toBeCloseTo(r.forecast[5].ebit+r.forecast[5].depreciation);
+ expect(r.forecast[5].fcff-r.forecast[0].fcff).toBeCloseTo(40*a.taxRate);
+ expect(r.terminalYear.capex/r.terminalYear.revenue).toBeCloseTo(.1);
+});
+it("retains sparse annual capital overrides, leaves revenue rates unchanged and reconciles capital efficiency without duplicate charges",()=>{
+ const override=Array<number|null>(10).fill(null);override[2]=.22;
+ const a={...defaultAssumptions,annualGrowth:Array(10).fill(.1),capexNearRate:.35,capexRate:.15,capexHoldYears:3,capexNormalizationYears:8,capexCurve:1.5,annualCapex:override};
+ const r=calculateDcf(illustrativeData,a);
+ expect(r.forecast[2].capex/r.forecast[2].revenue).toBeCloseTo(.22);
+ expect(r.forecast[3].capex/r.forecast[3].revenue).toBeCloseTo(projectedCapexRate(.15,.35,4,8,3,1.5));
+ expect(a.annualGrowth).toEqual(Array(10).fill(.1));expect(a.annualCapex).toEqual(override);
+ const w=calculateDcf(illustrativeData,{...a,wacc:a.wacc+.01});expect(w.forecast[2].capex).toBe(r.forecast[2].capex);
+ const floor=calculateDcf({...illustrativeData,salesToCapital:2},{...a,capexRate:0,capexNearRate:0,annualCapex:Array(10).fill(null),nwcRate:0});
+ expect(floor.forecast[0].capex-floor.forecast[0].depreciation).toBeCloseTo((floor.forecast[0].revenue-1000)/2);
+ const leased=calculateDcf(illustrativeData,{...a,capexRate:.05,capexNearRate:.05,annualCapex:undefined,financeLeaseInvestmentRate:.1});
+ expect(leased.forecast[0].capex).toBeCloseTo(leased.forecast[0].revenue*.15);
+ expect(leased.forecast[0].leaseAssetAdditions).toBeCloseTo(leased.forecast[0].revenue*.1);
+ expect(r.forecast[0].leaseAssetAdditions).toBeUndefined();
+ const fiscal={...illustrativeData,fiscalForecast:{anchorEnd:"2025-12-31",valuationEnd:"2026-09-30",yearEnds:Array.from({length:10},(_,i)=>`${2026+i}-12-31`),elapsedActuals:{revenue:300,ebit:60,depreciation:10,capex:30,changeInNwc:1}}};
+ expect(()=>calculateDcf(fiscal,{...a,financeLeaseInvestmentRate:.1})).toThrow(/YTD finance-lease/);
+ const reconciled=calculateDcf(fiscal,{...a,financeLeaseInvestmentRate:.1,financeLeaseYtdAdditions:20});
+ expect(reconciled.forecast[0].elapsedFcff).toBeCloseTo(60*(1-a.taxRate)+10-30-20-1);
+ expect(()=>calculateDcf(illustrativeData,{...a,capexNormalizationYears:3})).toThrow(/follow/);
+});

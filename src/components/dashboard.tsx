@@ -22,15 +22,16 @@ import { millions, money, percent } from "@/lib/format";
 import AssumptionInput from "./assumption-input";
 import Charts from "./charts";
 import type { RevenuePlan } from "@/lib/estimates/types";
+import { projectedCapexRate } from "@/lib/finance/capex";
 import { assumptionErrors } from "@/lib/finance/validation";
 import { stageGrowths, annualSummary } from "@/lib/estimates/forecast";
 const fields: {
-  key: Exclude<keyof Assumptions, "annualGrowth">;
+  key: Exclude<keyof Assumptions, "annualGrowth" | "annualCapex">;
   label: string;
   min: number;
   max: number;
   step?: number;
-  unit?: "%" | "m";
+  unit?: "%" | "m" | "years";
   hint?: string;
 }[] = [
   {
@@ -54,9 +55,18 @@ const fields: {
   { key: "initialMargin", label: "Year 1 operating margin", min: -50, max: 60 },
   { key: "targetMargin", label: "Year 10 operating margin", min: -50, max: 60 },
   { key: "taxRate", label: "Cash tax rate", min: 0, max: 50 },
-  { key: "daRate", label: "D&A / revenue", min: 0, max: 30 },
-  { key: "capexNearRate", label: "Near-term CapEx / revenue · years 1–2", min: 0, max: 60,
-    hint: "Holds for two years, then converges to the long-term ratio by year 6. FY1 is floored at reported YTD spending." },
+  { key: "daNearRate", label: "Starting D&A / revenue", min: 0, max: 50,
+    hint: "Latest complete disclosure. Future D&A changes adjust EBIT relative to this starting intensity before the FCFF add-back." },
+  { key: "daRate", label: "D&A / revenue", min: 0, max: 50,
+    hint: "With a starting D&A ratio, this is the long-term normalized intensity; it transitions after a two-year lag. No asset lives are invented." },
+  { key: "financeLeaseInvestmentRate", label: "Finance-lease asset additions / revenue", min: 0, max: 60,
+    hint: "Optional reviewed noncash additions. Blank means unavailable: the forecast covers cash CapEx only. Include current finance-lease debt in the debt total once; do not enter operating-lease cash expenses already in EBIT." },
+  { key: "financeLeaseYtdAdditions", label: "Reported YTD finance-lease asset additions", min: 0, max: 100000, step: 1, unit: "m",
+    hint: "Required for a lease-inclusive annual forecast with elapsed YTD actuals. Supply a reviewed amount; missing additions are never inferred to be zero." },
+  { key: "capexHoldYears", label: "CapEx expansion period", min: 1, max: 4, step: 1, unit: "years" },
+  { key: "capexNormalizationYears", label: "CapEx normalization year", min: 3, max: 10, step: 1, unit: "years" },
+  { key: "capexNearRate", label: "Near-term CapEx / revenue", min: 0, max: 60,
+    hint: "Holds through the expansion period, then follows a company-specific curve toward the long-term ratio by the normalization year. FY1 is floored at reported YTD spending." },
   { key: "capexRate", label: "CapEx / revenue", min: 0, max: 60,
     hint: "With a near-term profile, this is the long-term and terminal ratio. The sales-to-capital floor can require additional investment." },
   {
@@ -147,6 +157,7 @@ export default function Dashboard({
   const [ticker, setTicker] = useState("ASTR"),
     [tickerError, setTickerError] = useState(""),
     [loading, setLoading] = useState(false);
+  const [capitalEntryError,setCapitalEntryError] = useState<string | null>(null);
   const [annualEntryError,setAnnualEntryError] = useState<string | null>(null);
   const [slowdown, setSlowdown] = useState(0),
     [period, setPeriod] = useState<SlowdownPeriod>("all");
@@ -184,6 +195,10 @@ export default function Dashboard({
     );
   const historicalComparison = forecastPlan?.mode === "consensus" && forecastPlan.historicalGrowths
     ? evaluateSelected({ ...applySlowdown(selected.assumptions, slowdown, period), annualGrowth: applySlowdown({ ...selected.assumptions, annualGrowth: forecastPlan.historicalGrowths }, slowdown, period).annualGrowth }) : null;
+  const capitalRisk = original.result ? [-.02,.02].some(delta=>{
+    const test=evaluateSelected({...selected.assumptions,capexRate:selected.assumptions.capexRate+delta}).result;
+    return test && Math.abs(test.valuePerShare-original.result!.valuePerShare)> .2*Math.max(1,Math.abs(original.result!.valuePerShare));
+  }) : false;
   const result = adjusted.result,
     error = adjusted.error;
   async function search(e: React.FormEvent) {
@@ -202,7 +217,7 @@ export default function Dashboard({
     }
   }
   function change(
-    key: Exclude<keyof Assumptions, "annualGrowth">,
+    key: Exclude<keyof Assumptions, "annualGrowth" | "annualCapex">,
     value: number,
   ) {
     setScenarioEdits(prev=>({...prev,[active]:{...prev[active],[key]:value}}));
@@ -401,7 +416,8 @@ export default function Dashboard({
             </div>
           </section>
           <section className="panel" aria-label="Valuation readiness">
-            <h3>{blockingError ? "Missing required inputs" : (Object.keys(fieldErrors).length || annualEntryError) ? "Invalid user assumptions" : original.error ? "Financial statement consistency requires review" : demo ? "Ready to calculate" : "Provisional — estimated assumptions"} · {selected.label}</h3>
+            <h3>{blockingError ? "Missing required inputs" : (Object.keys(fieldErrors).length || annualEntryError || capitalEntryError) ? "Invalid user assumptions" : original.error ? "Financial statement consistency requires review" : demo ? "Ready to calculate" : "Provisional — estimated assumptions"} · {selected.label}</h3>
+            {capitalEntryError && <p role="alert">{capitalEntryError}</p>}
             {annualEntryError && <p role="alert">{annualEntryError} The last valid calculation is retained.</p>}
             {original.error && <p role="alert">{selected.label}: {original.error}</p>}
             {fieldErrors.annualGrowth && <p role="alert">{fieldErrors.annualGrowth} Correct the corresponding annual growth input below.</p>}
@@ -632,6 +648,7 @@ export default function Dashboard({
                 <button
                   className="text-button"
                   onClick={() => {
+                    setCapitalEntryError(null);
                     setAnnualEntryError(null);
                     setScenarioEdits(prev=>({...prev,[active]:{}}));
                     setAnnualEdits((prev) => ({
@@ -664,7 +681,7 @@ export default function Dashboard({
               {fields
                 .filter(
                   (f) =>
-                    (f.key !== "capexNearRate" || selected.assumptions.capexNearRate !== undefined) && (!annualMode ||
+                    (!["capexNearRate","capexHoldYears","capexNormalizationYears","daNearRate"].includes(f.key) || selected.assumptions[f.key] !== undefined) && (!annualMode ||
                     !["growthEarly", "growthMiddle", "growthLate"].includes(
                       f.key,
                     )),
@@ -673,12 +690,11 @@ export default function Dashboard({
                   <AssumptionInput
                     key={`${active}-${key}`}
                     {...field}
-                    label={key === "capexRate" && selected.assumptions.capexNearRate !== undefined ? "Long-term CapEx / revenue" : field.label}
+                    label={key === "targetMargin" && selected.assumptions.daNearRate !== undefined ? "Year 10 margin · at starting D&A intensity" : key === "capexRate" && selected.assumptions.capexNearRate !== undefined ? "Long-term CapEx / revenue" : key === "daRate" && selected.assumptions.daNearRate !== undefined ? "Long-term D&A / revenue" : field.label}
                     error={fieldErrors[key]}
                     hint={
                       !demo &&
-                      selected.assumptions[key] !==
-                        defaults.find((s) => s.id === active)?.assumptions[key]
+                      Object.hasOwn(scenarioEdits[active] ?? {},key)
                         ? `${field.hint ?? ""} Manual override of automatic baseline.`
                         : field.hint
                     }
@@ -686,9 +702,30 @@ export default function Dashboard({
                     onChange={(v) => change(key, v)}
                   />
                 ))}
+              <details className="coverage-details">
+                <summary>Annual cash CapEx overrides · {selected.label}</summary>
+                <p>Ratios are percentages of each year’s revenue. Unchanged years follow the model. YTD spending and supported total-reinvestment requirements remain floors; no second reinvestment charge is added. Terminal CapEx uses the long-term ratio. Revenue forecasts are unchanged.</p>
+                {fieldErrors.annualCapex && <p role="alert">{fieldErrors.annualCapex}</p>}
+                <div className="manual-grid">{Array.from({length:10},(_,i)=>{
+                  const explicit=selected.assumptions.annualCapex?.[i];
+                  const rate=explicit ?? projectedCapexRate(selected.assumptions.capexRate,selected.assumptions.capexNearRate,i+1,selected.assumptions.capexNormalizationYears,selected.assumptions.capexHoldYears,selected.assumptions.capexCurve);
+                  return <label className="manual-field" key={i}>FY{i+1} · {forecastPlan?.rows[i]?.fiscalEnd ?? `year ${i+1}`} · {explicit!=null?"User override":"Historical model"}
+                    <input type="number" step="any" aria-label={`${selected.label} FY${i+1} cash CapEx ratio`} value={Number.isFinite(rate)?Number((rate*100).toFixed(4)):""} onChange={e=>{
+                      if(e.target.value==="") {setCapitalEntryError(`${selected.label} FY${i+1} CapEx ratio is required; the previous forecast is retained.`);return;}
+                      setCapitalEntryError(null);
+                      const next=[...(selected.assumptions.annualCapex ?? Array(10).fill(null))];next[i]=Number(e.target.value)/100;
+                      setScenarioEdits(prev=>({...prev,[active]:{...prev[active],annualCapex:next}}));
+                    }}/>
+                  </label>;
+                })}</div>
+                <button className="text-button" onClick={()=>{setCapitalEntryError(null);setScenarioEdits(prev=>({...prev,[active]:{...prev[active],annualCapex:undefined}}));}}>Restore modeled annual CapEx</button>
+              </details>
+              {capitalRisk && <p role="alert" className="alert">High investment sensitivity: a ±2 percentage-point change in long-term CapEx/revenue moves the selected case value by more than 20%. Review capital efficiency and terminal assumptions; this is not a verified fair value.</p>}
+              <p className="table-note">Investment settings are historical estimates unless marked as overrides. D&A is normalized after a lag; operating margins are quoted at starting D&A intensity, so increased depreciation also reduces EBIT. Cash CapEx does not include noncash lease additions. Unless lease additions are explicitly entered, they remain unavailable and this is a cash-CapEx-scope forecast. Enter current lease obligations in total debt only once. Long-term capital intensity is uncertain and can materially change intrinsic value.</p>
               <button
                 className="reset-all"
                 onClick={() => {
+                  setCapitalEntryError(null);
                   setAnnualEntryError(null);
                   setScenarioEdits({});
                   setAnnualEdits({});
@@ -889,6 +926,7 @@ export default function Dashboard({
                     </tr>
                   </thead>
                   <tbody>
+                    <tr><th>FCFF margin</th>{[...result.forecast,result.terminalYear].map(r=><td key={r.year}>{percent(r.revenue>0?r.fcff/r.revenue:null)}</td>)}</tr>
                     <tr><th>Effective CapEx / revenue</th>{[...result.forecast,result.terminalYear].map(r=><td key={r.year}>{percent(r.revenue>0?r.capex/r.revenue:null)}</td>)}</tr>
                     {(
                       [
@@ -899,7 +937,9 @@ export default function Dashboard({
                         ["Cash taxes", "cashTaxes"],
                         ["NOPAT", "nopat"],
                         ["+ D&A", "depreciation"],
-                        ["− Capital expenditures", "capex"],
+                        ["Cash capital expenditures", "cashCapex"],
+                        ["Finance-lease asset additions (unavailable unless entered)", "leaseAssetAdditions"],
+                        ["− Total modeled capital investment", "capex"],
                         ["− Change in NWC", "changeInNwc"],
                         ["Full-year FCFF", "fcff"],
                         ...(data.fiscalForecast

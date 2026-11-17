@@ -7,7 +7,7 @@ interface Props {
   min: number;
   max: number;
   step?: number;
-  unit?: "%" | "m";
+  unit?: "%" | "m" | "years";
   hint?: string;
   error?: string;
 }
